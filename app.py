@@ -303,7 +303,7 @@ with st.sidebar:
                 use_container_width=True
             )
             
-    st.caption("v2.4 - PT Geoprima Nusantara")
+    st.caption("v2.4 - Aerial Jaya")
 
 # ==============================================================================
 # MAIN PAGE ROUTING (PETUGAS vs ADMIN)
