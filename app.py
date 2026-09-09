@@ -112,6 +112,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Safe Secrets Helper
+def get_secret(key, default_val=""):
+    try:
+        if hasattr(st, "secrets") and key in st.secrets:
+            val = st.secrets[key]
+            if isinstance(val, str):
+                return val
+            return str(val)
+    except Exception:
+        pass
+    return default_val
+
 # ==============================================================================
 # DEFAULT CONFIG & SESSION STATE
 # ==============================================================================
@@ -121,9 +133,9 @@ current_month_label = f"{MONTH_NAMES[now.month - 1]} {now.year}"
 
 if "config" not in st.session_state:
     st.session_state.config = {
-        "ADMIN_EMAIL": st.secrets.get("ADMIN_EMAIL", "alex.kelana@gmail.com"),
-        "APPS_SCRIPT_URL": st.secrets.get("APPS_SCRIPT_URL", ""),
-        "ADMIN_PIN": st.secrets.get("ADMIN_PIN", "1234"),
+        "ADMIN_EMAIL": get_secret("ADMIN_EMAIL", "alex.kelana@gmail.com"),
+        "APPS_SCRIPT_URL": get_secret("APPS_SCRIPT_URL", ""),
+        "ADMIN_PIN": get_secret("ADMIN_PIN", "1234"),
     }
 
 if "role" not in st.session_state:
@@ -138,8 +150,17 @@ if "is_phase2_enabled" not in st.session_state:
 if "site" not in st.session_state:
     st.session_state.site = ""
 
+if "pilot_name" not in st.session_state:
+    st.session_state.pilot_name = ""
+
 if "pilot_email" not in st.session_state:
     st.session_state.pilot_email = ""
+
+if "drone_model" not in st.session_state:
+    st.session_state.drone_model = "DJI Mavic 3 Enterprise (M3E)"
+
+if "custom_drone" not in st.session_state:
+    st.session_state.custom_drone = ""
 
 if "created_folder_url" not in st.session_state:
     st.session_state.created_folder_url = ""
@@ -381,79 +402,78 @@ st.markdown(f"""
 # ------------------------------------------------------------------------------
 st.markdown("### **Tahap 1: Buat Folder Upload di Google Drive**")
 
-with st.container():
-    col_site, col_email = st.columns([1, 1])
-    
-    with col_site:
-        input_site = st.text_input(
-            "Nama Site / ID Tower *",
-            value=st.session_state.site,
-            placeholder="Contoh: SITE-A atau PK1276",
-            disabled=st.session_state.is_phase1_completed,
-            help="Masukkan kode atau nama lokasi tower survey"
-        )
-        
-    with col_email:
-        input_pilot_email = st.text_input(
-            "Email Pilot (Akun Google) *",
-            value=st.session_state.pilot_email,
-            placeholder="pilot.drone@gmail.com",
-            disabled=st.session_state.is_phase1_completed,
-            help="Wajib akun Google untuk mendapatkan akses editor folder upload"
-        )
-        
-    btn_create_folder = st.button(
-        "📁 Buat Folder Upload",
-        type="primary",
-        disabled=st.session_state.is_phase1_completed or not input_site.strip() or not input_pilot_email.strip()
+col_site, col_email = st.columns([1, 1])
+
+with col_site:
+    input_site = st.text_input(
+        "Nama Site / ID Tower *",
+        value=st.session_state.site,
+        placeholder="Contoh: SITE-A atau PK1276",
+        disabled=st.session_state.is_phase1_completed,
+        help="Masukkan kode atau nama lokasi tower survey"
     )
     
-    if btn_create_folder:
-        with st.spinner("Sedang membuat folder bulanan & site di Google Drive..."):
-            res = create_drive_folder(input_site.strip(), current_month_label, input_pilot_email.strip())
-            
-            if res.get("success"):
-                st.session_state.site = input_site.strip()
-                st.session_state.pilot_email = input_pilot_email.strip()
-                st.session_state.created_folder_url = res.get("folderUrl", "")
-                st.success(res.get("message", "Folder upload berhasil dibuat!"))
-            else:
-                st.error(res.get("message", "Gagal membuat folder."))
+with col_email:
+    input_pilot_email = st.text_input(
+        "Email Pilot (Akun Google) *",
+        value=st.session_state.pilot_email,
+        placeholder="pilot.drone@gmail.com",
+        disabled=st.session_state.is_phase1_completed,
+        help="Wajib akun Google untuk mendapatkan akses editor folder upload"
+    )
+    
+btn_create_folder = st.button(
+    "📁 Buat Folder Upload",
+    type="primary",
+    disabled=st.session_state.is_phase1_completed or not input_site.strip() or not input_pilot_email.strip()
+)
 
-    # Jika folder sudah dibuat, tampilkan link Drive, Box EXIF, dan Tombol Konfirmasi Selesai
-    if st.session_state.created_folder_url:
-        st.markdown(f"""
-            <div style="text-align:center; margin: 1rem 0;">
-                <a href="{st.session_state.created_folder_url}" target="_blank" style="text-decoration:none;">
-                    <button style="padding:10px 20px; font-size:0.95rem; font-weight:700; color:#0284c7; background:#ffffff; border:2px solid #0284c7; border-radius:8px; cursor:pointer;">
-                        🔗 Buka Folder Upload di Google Drive ↗
-                    </button>
-                </a>
-            </div>
-        """, unsafe_allow_html=True)
+if btn_create_folder:
+    with st.spinner("Sedang membuat folder bulanan & site di Google Drive..."):
+        res = create_drive_folder(input_site.strip(), current_month_label, input_pilot_email.strip())
         
-        # EXIF Metadata Verification Callout Box
-        st.markdown("""
-        <div class="exif-card">
-            <h4 style="margin:0 0 6px 0; color:#1d4ed8;">🛑 Aturan Wajib: Verifikasi Metadata EXIF (GPS & Ketinggian)</h4>
-            <p style="margin:0 0 8px 0; font-size:0.87rem; line-height:1.45;">
-                Sebelum mengunggah berkas ke Google Drive, Pilot <strong>wajib memastikan metadata EXIF (Koordinat GPS, Ketinggian/Altitude, Tanggal & Jam)</strong> tertanam pada seluruh foto (7 foto) & video (1 video). Berkas tanpa metadata geotag akan <strong>ditolak oleh QC Studio</strong>.
-            </p>
-            <div style="background:#ffffff; border:1px solid #bfdbfe; border-radius:6px; padding:8px 12px; font-size:0.82rem;">
-                <strong>🛠️ Alat Cek Metadata Gratis (Rekomendasi):</strong><br>
-                • <a href="https://play.google.com/store/apps/details?id=net.xnano.android.photoexifeditor" target="_blank">📱 Android: Photo EXIF Editor ↗</a> | 
-                • <a href="https://apps.apple.com/app/exif-metadata/id1455197364" target="_blank">🍏 iOS: Exif Metadata ↗</a> | 
-                • <a href="https://exiftool.org/" target="_blank">💻 Desktop: ExifTool ↗</a>
-            </div>
+        if res.get("success"):
+            st.session_state.site = input_site.strip()
+            st.session_state.pilot_email = input_pilot_email.strip()
+            st.session_state.created_folder_url = res.get("folderUrl", "")
+            st.success(res.get("message", "Folder upload berhasil dibuat!"))
+        else:
+            st.error(res.get("message", "Gagal membuat folder."))
+
+# Jika folder sudah dibuat, tampilkan link Drive, Box EXIF, dan Tombol Konfirmasi Selesai
+if st.session_state.created_folder_url:
+    st.markdown(f"""
+        <div style="text-align:center; margin: 1rem 0;">
+            <a href="{st.session_state.created_folder_url}" target="_blank" style="text-decoration:none;">
+                <button style="padding:10px 20px; font-size:0.95rem; font-weight:700; color:#0284c7; background:#ffffff; border:2px solid #0284c7; border-radius:8px; cursor:pointer;">
+                    🔗 Buka Folder Upload di Google Drive ↗
+                </button>
+            </a>
         </div>
-        """, unsafe_allow_html=True)
-        
-        # Tombol Konfirmasi Selesai Upload
-        if not st.session_state.is_phase1_completed:
-            if st.button("✓ Selesai Upload (Lanjut ke Tahap 2)", type="primary", use_container_width=True):
-                st.session_state.is_phase1_completed = True
-                st.session_state.is_phase2_enabled = True
-                st.rerun()
+    """, unsafe_allow_html=True)
+    
+    # EXIF Metadata Verification Callout Box
+    st.markdown("""
+    <div class="exif-card">
+        <h4 style="margin:0 0 6px 0; color:#1d4ed8;">🛑 Aturan Wajib: Verifikasi Metadata EXIF (GPS & Ketinggian)</h4>
+        <p style="margin:0 0 8px 0; font-size:0.87rem; line-height:1.45;">
+            Sebelum mengunggah berkas ke Google Drive, Pilot <strong>wajib memastikan metadata EXIF (Koordinat GPS, Ketinggian/Altitude, Tanggal & Jam)</strong> tertanam pada seluruh foto (7 foto) & video (1 video). Berkas tanpa metadata geotag akan <strong>ditolak oleh QC Studio</strong>.
+        </p>
+        <div style="background:#ffffff; border:1px solid #bfdbfe; border-radius:6px; padding:8px 12px; font-size:0.82rem;">
+            <strong>🛠️ Alat Cek Metadata Gratis (Rekomendasi):</strong><br>
+            • <a href="https://play.google.com/store/apps/details?id=net.xnano.android.photoexifeditor" target="_blank">📱 Android: Photo EXIF Editor ↗</a> | 
+            • <a href="https://apps.apple.com/app/exif-metadata/id1455197364" target="_blank">🍏 iOS: Exif Metadata ↗</a> | 
+            • <a href="https://exiftool.org/" target="_blank">💻 Desktop: ExifTool ↗</a>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Tombol Konfirmasi Selesai Upload
+    if not st.session_state.is_phase1_completed:
+        if st.button("✓ Selesai Upload (Lanjut ke Tahap 2)", type="primary", use_container_width=True):
+            st.session_state.is_phase1_completed = True
+            st.session_state.is_phase2_enabled = True
+            st.rerun()
 
 st.divider()
 
@@ -465,54 +485,70 @@ st.markdown("### **Tahap 2: Pengisian Data Laporan & Koordinat Lokasi**")
 if not st.session_state.is_phase2_enabled:
     st.info("🔒 **Tahap 2 Terkunci:** Selesaikan Tahap 1 dan klik tombol *'Selesai Upload'* untuk membuka formulir ini.")
 else:
-    with st.form("form_phase_2"):
-        col_p1, col_p2 = st.columns(2)
+    col_p1, col_p2 = st.columns(2)
+    
+    with col_p1:
+        val_pilot = st.text_input(
+            "Nama Pilot *",
+            value=st.session_state.pilot_name,
+            placeholder="Nama Lengkap Pilot (RPIC)",
+            key="input_pilot_name"
+        )
         
-        with col_p1:
-            val_pilot = st.text_input("Nama Pilot *", placeholder="Nama Lengkap Pilot (RPIC)")
-            
-        with col_p2:
-            val_drone = st.selectbox("Model Drone *", options=DRONE_OPTIONS)
-            
-        val_custom_drone = ""
-        if val_drone == "Lainnya...":
-            val_custom_drone = st.text_input("Ketik Model Drone Kustom *", placeholder="Contoh: Custom FPV Quad")
-            
-        val_site2 = st.text_input("Nama Site (Sama dengan Tahap 1)", value=st.session_state.site, disabled=True)
+    with col_p2:
+        val_drone = st.selectbox(
+            "Model Drone *",
+            options=DRONE_OPTIONS,
+            index=DRONE_OPTIONS.index(st.session_state.drone_model) if st.session_state.drone_model in DRONE_OPTIONS else 0,
+            key="select_drone_model"
+        )
         
-        # Coordinate Input & GPS
-        st.markdown("#### **Titik Koordinat Lokasi (Lat, Long)**")
-        coord_input = st.text_input("Koordinat Desimal (Format: Latitude, Longitude) *", value=st.session_state.coords)
+    val_custom_drone = ""
+    if val_drone == "Lainnya...":
+        val_custom_drone = st.text_input("Ketik Model Drone Kustom *", value=st.session_state.custom_drone, placeholder="Contoh: Custom FPV Quad")
         
-        # Parse coordinate for Folium map
-        try:
-            parts = [float(x.strip()) for x in coord_input.split(",")]
-            if len(parts) == 2 and -90 <= parts[0] <= 90 and -180 <= parts[1] <= 180:
-                current_lat, current_lng = parts[0], parts[1]
-            else:
-                current_lat, current_lng = -6.208800, 106.845600
-        except Exception:
+    val_site2 = st.text_input("Nama Site (Sama dengan Tahap 1)", value=st.session_state.site, disabled=True)
+    
+    # Coordinate Input & GPS
+    st.markdown("#### **Titik Koordinat Lokasi (Lat, Long)**")
+    coord_input = st.text_input("Koordinat Desimal (Format: Latitude, Longitude) *", value=st.session_state.coords)
+    
+    # Parse coordinate for Folium map
+    try:
+        parts = [float(x.strip()) for x in coord_input.split(",")]
+        if len(parts) == 2 and -90 <= parts[0] <= 90 and -180 <= parts[1] <= 180:
+            current_lat, current_lng = parts[0], parts[1]
+        else:
             current_lat, current_lng = -6.208800, 106.845600
-            
-        # Interactive Folium Map
-        st.caption("📍 Peta Interaktif (Klik pada peta untuk menyesuaikan titik koordinat):")
-        m = folium.Map(location=[current_lat, current_lng], zoom_start=15, control_scale=True)
-        folium.Marker(
-            [current_lat, current_lng],
-            popup=f"Titik Survey: {st.session_state.site}",
-            tooltip="Geser/Klik untuk memilih titik",
-            icon=folium.Icon(color="blue", icon="plane", prefix="fa")
-        ).add_to(m)
+    except Exception:
+        current_lat, current_lng = -6.208800, 106.845600
         
-        map_data = st_folium(m, height=260, width=None, returned_objects=["last_clicked"])
-        
-        if map_data and map_data.get("last_clicked"):
+    # Interactive Folium Map (Safely rendered outside form)
+    st.caption("📍 Peta Interaktif (Klik pada peta untuk memilih titik lokasi survey):")
+    m = folium.Map(location=[current_lat, current_lng], zoom_start=15, control_scale=True)
+    folium.Marker(
+        [current_lat, current_lng],
+        popup=f"Titik Survey: {st.session_state.site}",
+        tooltip="Titik Lokasi Terpilih",
+        icon=folium.Icon(color="blue", icon="plane", prefix="fa")
+    ).add_to(m)
+    
+    try:
+        map_data = st_folium(m, height=280, use_container_width=True, key="survey_leaflet_map")
+        if map_data and isinstance(map_data, dict) and map_data.get("last_clicked"):
             clicked_lat = round(map_data["last_clicked"]["lat"], 6)
             clicked_lng = round(map_data["last_clicked"]["lng"], 6)
-            st.session_state.coords = f"{clicked_lat}, {clicked_lng}"
-            
-        submit_btn = st.form_submit_button("🚀 Kirim Laporan", type="primary", use_container_width=True)
+            new_coords = f"{clicked_lat}, {clicked_lng}"
+            if new_coords != st.session_state.coords:
+                st.session_state.coords = new_coords
+                st.session_state.lat = clicked_lat
+                st.session_state.lng = clicked_lng
+                st.rerun()
+    except Exception as map_err:
+        st.caption(f"Peta statis aktif: {current_lat}, {current_lng}")
         
+    submit_btn = st.button("🚀 Kirim Laporan", type="primary", use_container_width=True)
+    
     if submit_btn:
         if not val_pilot.strip():
             st.error("Nama Pilot wajib diisi.")
@@ -556,4 +592,5 @@ else:
         st.session_state.is_phase2_enabled = False
         st.session_state.site = ""
         st.session_state.created_folder_url = ""
+        st.session_state.pilot_name = ""
         st.rerun()
