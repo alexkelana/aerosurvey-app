@@ -1,7 +1,3 @@
-ADMIN_EMAIL = "alex.kelana@gmail.com"
-APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyzQ34gSOfXaaF4OgKqa0nuqtPTRt_nICLOjAUwpykJrVCC476wDkMPH4RMJmPz4-vb/exec"
-ADMIN_PIN = "1234"
-
 [theme]
 primaryColor = "#0284c7"
 backgroundColor = "#f8fafc"
