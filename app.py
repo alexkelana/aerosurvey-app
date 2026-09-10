@@ -6,6 +6,7 @@ import folium
 from streamlit_folium import st_folium
 import pandas as pd
 import os
+import re
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -127,7 +128,9 @@ def get_secret(key, default_val=""):
 # ==============================================================================
 # DEFAULT CONFIG & SESSION STATE
 # ==============================================================================
-MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MEI", "JUN", "JUL", "AGU", "SEP", "OKT", "NOV", "DES"]
+# Label bulan HARUS sama dengan backend Code.gs (parseMonthLabel)
+# Backend: ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']
+MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 now = datetime.datetime.now()
 current_month_label = f"{MONTH_NAMES[now.month - 1]} {now.year}"
 
@@ -201,22 +204,27 @@ DRONE_OPTIONS = [
 # ==============================================================================
 # HELPER FUNCTIONS
 # ==============================================================================
+def is_valid_email(email: str) -> bool:
+    return bool(re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", (email or "").strip()))
+
+
 def create_drive_folder(site_name, month_str, email_pilot):
-    """Call Google Apps Script backend to create folder and grant permissions"""
+    """Call Google Apps Script backend to create folder and grant permissions.
+    Payload keys MUST match Code.gs: site, monthLabelStr, pilotEmail
+    """
     api_url = st.session_state.config.get("APPS_SCRIPT_URL", "").strip()
-    
+
     if api_url:
         try:
             payload = {
                 "action": "createFolder",
                 "site": site_name,
-                "month": month_str,
-                "email": email_pilot
+                "monthLabelStr": month_str,   # ✅ match backend
+                "pilotEmail": email_pilot     # ✅ match backend
             }
             res = requests.post(
                 api_url,
-                data=json.dumps(payload),
-                headers={"Content-Type": "text/plain;charset=utf-8"},
+                json=payload,                 # Content-Type: application/json
                 timeout=25
             )
             data = res.json()
@@ -231,44 +239,64 @@ def create_drive_folder(site_name, month_str, email_pilot):
             "success": True,
             "folderUrl": mock_url,
             "folderId": mock_id,
-            "message": f"Folder '{site_name}' berhasil disiapkan di Google Drive!"
+            "message": f"[DEMO] Folder '{site_name}' berhasil disiapkan (mode offline)."
         }
 
+
 def submit_survey_report(report_data):
-    """Submit report to Google Apps Script and record to local session"""
+    """Submit report to Google Apps Script and record to local session.
+    Payload keys MUST match Code.gs submitReport signature + extraData.
+    """
     api_url = st.session_state.config.get("APPS_SCRIPT_URL", "").strip()
-    
-    # Save to local session history
+
+    # Save to local session history (always)
     st.session_state.reports.insert(0, report_data)
-    
+
     if api_url:
         try:
+            # Map frontend fields → backend expected names
             payload = {
                 "action": "submitReport",
-                **report_data
+                "pilot": report_data.get("pilot", ""),
+                "drone": report_data.get("drone", ""),
+                "site": report_data.get("site", ""),
+                "coords": report_data.get("koordinat", ""),          # ✅ backend: coords
+                "monthLabelStr": report_data.get("monthLabel", ""),  # ✅ backend: monthLabelStr
+                # extraData fields (dibaca di submitReport via extraData)
+                "pilotEmail": report_data.get("pilotEmail", ""),
+                "surveyType": report_data.get("surveyType", "Orthophoto"),
+                "notes": report_data.get("notes", ""),
+                "copilot": report_data.get("copilot", ""),
+                "droneSerial": report_data.get("droneSerial", ""),
+                "client": report_data.get("client", ""),
+                "altitude": report_data.get("altitude", ""),
+                "weather": report_data.get("weather", ""),
+                "windSpeed": report_data.get("windSpeed", ""),
+                "flightDuration": report_data.get("flightDuration", ""),
             }
             res = requests.post(
                 api_url,
-                data=json.dumps(payload),
-                headers={"Content-Type": "text/plain;charset=utf-8"},
-                timeout=35
+                json=payload,
+                timeout=45
             )
             return res.json()
         except Exception as e:
             return {
                 "success": True,
                 "offline": True,
-                "message": f"Laporan tersimpan di memori lokal. Sinkronisasi server: {str(e)}",
-                "copiedFiles": 7,
-                "skippedFiles": 0
+                "message": f"Laporan tersimpan di memori lokal. Sinkronisasi server gagal: {str(e)}",
+                "copied": 0,
+                "skipped": 0
             }
     else:
         return {
             "success": True,
+            "offline": True,
             "message": "Laporan berhasil dicatat (Mode Demo / Mandiri)!",
-            "copiedFiles": 7,
-            "skippedFiles": 0
+            "copied": 0,
+            "skipped": 0
         }
+
 
 # ==============================================================================
 # SIDEBAR NAVIGATION & CONTROLS
@@ -278,7 +306,7 @@ with st.sidebar:
     st.markdown("### **AeroSurvey Pro**")
     st.caption("Sistem Pelaporan Survey Lapangan Aerial")
     st.divider()
-    
+
     # Mode Switcher
     if st.session_state.role == "admin":
         st.success("🔒 **Mode: ADMINISTRATOR**")
@@ -290,19 +318,19 @@ with st.sidebar:
         with st.expander("🔑 Akses Administrator"):
             pin_input = st.text_input("Masukkan PIN Admin", type="password")
             if st.button("Buka Akses Admin", use_container_width=True):
-                if pin_input == st.session_state.config.get("ADMIN_PIN", "1234"):
+                expected_pin = st.session_state.config.get("ADMIN_PIN", "")
+                if expected_pin and pin_input == expected_pin:
                     st.session_state.role = "admin"
                     st.success("Akses Admin Terbuka!")
                     st.rerun()
                 else:
                     st.error("PIN tidak sesuai.")
-                    
+
     st.divider()
-    
+
     # Quick Links & PDF
     st.markdown("#### **Tautan Cepat & Dokumen**")
-    
-    # Order Sites Map link
+
     st.markdown("""
         <a href="https://www.google.com/maps/d/edit?mid=1yT10qibBTAx1W6d369YWkFsK8l2cD74&usp=drive_link" target="_blank" style="text-decoration:none;">
             <button style="width:100%; padding:8px; border-radius:6px; background-color:#eff6ff; color:#0284c7; border:1px solid #bfdbfe; font-weight:600; cursor:pointer; margin-bottom:8px;">
@@ -310,8 +338,7 @@ with st.sidebar:
             </button>
         </a>
     """, unsafe_allow_html=True)
-    
-    # SOP PDF Download Button
+
     pdf_path = os.path.join(os.path.dirname(__file__), "SOP_Pelaporan_Survey_Aerial.pdf")
     if os.path.exists(pdf_path):
         with open(pdf_path, "rb") as pdf_file:
@@ -323,8 +350,8 @@ with st.sidebar:
                 mime="application/pdf",
                 use_container_width=True
             )
-            
-    st.caption("v2.4 - Aerial Jaya")
+
+    st.caption("v2.5 - Aerial Jaya (patched)")
 
 # ==============================================================================
 # MAIN PAGE ROUTING (PETUGAS vs ADMIN)
@@ -336,26 +363,24 @@ with st.sidebar:
 if st.session_state.role == "admin":
     st.markdown("## 📊 Dashboard Administrator & Rekapitulasi Survey")
     st.caption("Kelola data laporan survey, ekspor data, dan konfigurasi Google Apps Script")
-    
+
     tab1, tab2, tab3 = st.tabs(["📋 Riwayat Laporan", "⚙️ Konfigurasi Backend", "📝 Formulir Petugas"])
-    
+
     with tab1:
         st.subheader("Rekapitulasi Survey Lapangan")
-        
-        # Summary Metrics
+
         total_reports = len(st.session_state.reports)
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Total Laporan", f"{total_reports}")
         col2.metric("Bulan Aktif", current_month_label)
         col3.metric("Status Backend", "Tersambung" if st.session_state.config.get("APPS_SCRIPT_URL") else "Lokal/Demo")
         col4.metric("Kamera EXIF", "Wajib Aktif")
-        
+
         if total_reports > 0:
             df = pd.DataFrame(st.session_state.reports)
             st.dataframe(df, use_container_width=True)
-            
-            # Export CSV
-            csv_data = df.to_csv(index=False).encode('utf-8')
+
+            csv_data = df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "📥 Ekspor Data ke CSV (Excel)",
                 data=csv_data,
@@ -364,19 +389,29 @@ if st.session_state.role == "admin":
             )
         else:
             st.info("Belum ada data laporan survey yang tersimpan di sesi ini.")
-            
+
     with tab2:
         st.subheader("Pengaturan Integrasi Google Drive & Apps Script")
-        new_apps_url = st.text_input("URL Deployment Google Apps Script (Web App)", value=st.session_state.config.get("APPS_SCRIPT_URL", ""))
-        new_admin_email = st.text_input("Email Notifikasi Admin", value=st.session_state.config.get("ADMIN_EMAIL", ""))
-        new_admin_pin = st.text_input("PIN Administrator", value=st.session_state.config.get("ADMIN_PIN", "1234"), type="password")
-        
+        new_apps_url = st.text_input(
+            "URL Deployment Google Apps Script (Web App)",
+            value=st.session_state.config.get("APPS_SCRIPT_URL", "")
+        )
+        new_admin_email = st.text_input(
+            "Email Notifikasi Admin",
+            value=st.session_state.config.get("ADMIN_EMAIL", "")
+        )
+        new_admin_pin = st.text_input(
+            "PIN Administrator",
+            value=st.session_state.config.get("ADMIN_PIN", "1234"),
+            type="password"
+        )
+
         if st.button("Simpan Pengaturan"):
             st.session_state.config["APPS_SCRIPT_URL"] = new_apps_url.strip()
             st.session_state.config["ADMIN_EMAIL"] = new_admin_email.strip()
             st.session_state.config["ADMIN_PIN"] = new_admin_pin.strip()
             st.success("Pengaturan berhasil disimpan!")
-            
+
     with tab3:
         st.info("Anda dapat menguji alur pengisian form petugas di bawah:")
 
@@ -412,7 +447,7 @@ with col_site:
         disabled=st.session_state.is_phase1_completed,
         help="Masukkan kode atau nama lokasi tower survey"
     )
-    
+
 with col_email:
     input_pilot_email = st.text_input(
         "Email Pilot (Akun Google) *",
@@ -421,7 +456,7 @@ with col_email:
         disabled=st.session_state.is_phase1_completed,
         help="Wajib akun Google untuk mendapatkan akses editor folder upload"
     )
-    
+
 btn_create_folder = st.button(
     "📁 Buat Folder Upload",
     type="primary",
@@ -429,16 +464,27 @@ btn_create_folder = st.button(
 )
 
 if btn_create_folder:
-    with st.spinner("Sedang membuat folder bulanan & site di Google Drive..."):
-        res = create_drive_folder(input_site.strip(), current_month_label, input_pilot_email.strip())
-        
-        if res.get("success"):
-            st.session_state.site = input_site.strip()
-            st.session_state.pilot_email = input_pilot_email.strip()
-            st.session_state.created_folder_url = res.get("folderUrl", "")
-            st.success(res.get("message", "Folder upload berhasil dibuat!"))
-        else:
-            st.error(res.get("message", "Gagal membuat folder."))
+    if not is_valid_email(input_pilot_email):
+        st.error("Format email pilot tidak valid.")
+    else:
+        with st.spinner("Sedang membuat folder bulanan & site di Google Drive..."):
+            res = create_drive_folder(
+                input_site.strip(),
+                current_month_label,
+                input_pilot_email.strip()
+            )
+
+            if res.get("success"):
+                st.session_state.site = input_site.strip()
+                st.session_state.pilot_email = input_pilot_email.strip()
+                st.session_state.created_folder_url = res.get("folderUrl", "")
+                msg = res.get("message", "Folder upload berhasil dibuat!")
+                if res.get("editorGranted") is False:
+                    st.warning(msg + " (Catatan: izin editor mungkin gagal karena kebijakan domain.)")
+                else:
+                    st.success(msg)
+            else:
+                st.error(res.get("message", "Gagal membuat folder."))
 
 # Jika folder sudah dibuat, tampilkan link Drive, Box EXIF, dan Tombol Konfirmasi Selesai
 if st.session_state.created_folder_url:
@@ -451,7 +497,7 @@ if st.session_state.created_folder_url:
             </a>
         </div>
     """, unsafe_allow_html=True)
-    
+
     # EXIF Metadata Verification Callout Box
     st.markdown("""
     <div class="exif-card">
@@ -467,7 +513,7 @@ if st.session_state.created_folder_url:
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+
     # Tombol Konfirmasi Selesai Upload
     if not st.session_state.is_phase1_completed:
         if st.button("✓ Selesai Upload (Lanjut ke Tahap 2)", type="primary", use_container_width=True):
@@ -486,7 +532,7 @@ if not st.session_state.is_phase2_enabled:
     st.info("🔒 **Tahap 2 Terkunci:** Selesaikan Tahap 1 dan klik tombol *'Selesai Upload'* untuk membuka formulir ini.")
 else:
     col_p1, col_p2 = st.columns(2)
-    
+
     with col_p1:
         val_pilot = st.text_input(
             "Nama Pilot *",
@@ -494,36 +540,60 @@ else:
             placeholder="Nama Lengkap Pilot (RPIC)",
             key="input_pilot_name"
         )
-        
+        # Sync ke session_state
+        if val_pilot is not None:
+            st.session_state.pilot_name = val_pilot.strip()
+
     with col_p2:
+        # Cari index drone yang tersimpan
+        try:
+            drone_idx = DRONE_OPTIONS.index(st.session_state.drone_model)
+        except ValueError:
+            drone_idx = 0
+
         val_drone = st.selectbox(
             "Model Drone *",
             options=DRONE_OPTIONS,
-            index=DRONE_OPTIONS.index(st.session_state.drone_model) if st.session_state.drone_model in DRONE_OPTIONS else 0,
+            index=drone_idx,
             key="select_drone_model"
         )
-        
+        st.session_state.drone_model = val_drone
+
     val_custom_drone = ""
     if val_drone == "Lainnya...":
-        val_custom_drone = st.text_input("Ketik Model Drone Kustom *", value=st.session_state.custom_drone, placeholder="Contoh: Custom FPV Quad")
-        
+        val_custom_drone = st.text_input(
+            "Ketik Model Drone Kustom *",
+            value=st.session_state.custom_drone,
+            placeholder="Contoh: Custom FPV Quad",
+            key="input_custom_drone"
+        )
+        st.session_state.custom_drone = val_custom_drone.strip()
+
     val_site2 = st.text_input("Nama Site (Sama dengan Tahap 1)", value=st.session_state.site, disabled=True)
-    
+
     # Coordinate Input & GPS
     st.markdown("#### **Titik Koordinat Lokasi (Lat, Long)**")
-    coord_input = st.text_input("Koordinat Desimal (Format: Latitude, Longitude) *", value=st.session_state.coords)
-    
+    coord_input = st.text_input(
+        "Koordinat Desimal (Format: Latitude, Longitude) *",
+        value=st.session_state.coords,
+        key="coord_text_input"
+    )
+
     # Parse coordinate for Folium map
     try:
         parts = [float(x.strip()) for x in coord_input.split(",")]
         if len(parts) == 2 and -90 <= parts[0] <= 90 and -180 <= parts[1] <= 180:
             current_lat, current_lng = parts[0], parts[1]
+            # Sync text input ke session_state (tanpa force rerun)
+            st.session_state.coords = f"{current_lat}, {current_lng}"
+            st.session_state.lat = current_lat
+            st.session_state.lng = current_lng
         else:
-            current_lat, current_lng = -6.208800, 106.845600
+            current_lat, current_lng = st.session_state.lat, st.session_state.lng
     except Exception:
-        current_lat, current_lng = -6.208800, 106.845600
-        
-    # Interactive Folium Map (Safely rendered outside form)
+        current_lat, current_lng = st.session_state.lat, st.session_state.lng
+
+    # Interactive Folium Map
     st.caption("📍 Peta Interaktif (Klik pada peta untuk memilih titik lokasi survey):")
     m = folium.Map(location=[current_lat, current_lng], zoom_start=15, control_scale=True)
     folium.Marker(
@@ -532,7 +602,7 @@ else:
         tooltip="Titik Lokasi Terpilih",
         icon=folium.Icon(color="blue", icon="plane", prefix="fa")
     ).add_to(m)
-    
+
     try:
         map_data = st_folium(m, height=280, use_container_width=True, key="survey_leaflet_map")
         if map_data and isinstance(map_data, dict) and map_data.get("last_clicked"):
@@ -544,45 +614,65 @@ else:
                 st.session_state.lat = clicked_lat
                 st.session_state.lng = clicked_lng
                 st.rerun()
-    except Exception as map_err:
+    except Exception:
         st.caption(f"Peta statis aktif: {current_lat}, {current_lng}")
-        
+
     submit_btn = st.button("🚀 Kirim Laporan", type="primary", use_container_width=True)
-    
+
     if submit_btn:
-        if not val_pilot.strip():
+        final_pilot = (st.session_state.pilot_name or val_pilot or "").strip()
+        if not final_pilot:
             st.error("Nama Pilot wajib diisi.")
         else:
-            final_drone = val_custom_drone.strip() if val_drone == "Lainnya..." else val_drone
-            
+            final_drone = (
+                st.session_state.custom_drone.strip()
+                if val_drone == "Lainnya..." and st.session_state.custom_drone.strip()
+                else val_drone
+            )
+
             with st.spinner("Sedang menyinkronkan laporan survey ke database..."):
                 rep_id = f"REP-{datetime.datetime.now().strftime('%Y%m%d')}-{st.session_state.site}"
                 report_payload = {
                     "id": rep_id,
                     "tanggal": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                     "monthLabel": current_month_label,
-                    "pilot": val_pilot.strip(),
+                    "pilot": final_pilot,
                     "pilotEmail": st.session_state.pilot_email,
                     "drone": final_drone,
                     "site": st.session_state.site,
                     "surveyType": "Orthophoto & BTS Documentation",
-                    "koordinat": coord_input.strip(),
+                    "koordinat": st.session_state.coords,   # akan di-map ke "coords" di helper
                     "folderUrl": st.session_state.created_folder_url,
                     "status": "Submitted"
                 }
-                
+
                 result = submit_survey_report(report_payload)
-                
+
                 if result.get("success"):
+                    # Backend mengembalikan "copied" / "skipped"
+                    copied = result.get("copied", result.get("copiedFiles", 0))
+                    skipped = result.get("skipped", result.get("skippedFiles", 0))
+                    offline = result.get("offline", False)
+
                     st.success(f"🎉 Laporan Berhasil Dikirim! (ID: {rep_id})")
+
+                    if offline:
+                        st.warning(
+                            "Mode offline / gagal sinkron ke server. "
+                            "Data hanya tersimpan di memori sesi browser ini."
+                        )
+
                     st.markdown(f"""
                     <div class="info-card">
                         <strong>Rekap Sinkronisasi:</strong><br>
-                        • File Disalin ke Backup: {result.get('copiedFiles', 7)} berkas<br>
-                        • File Duplikat Dilewati: {result.get('skippedFiles', 0)} berkas<br>
+                        • File Disalin ke Backup: <strong>{copied}</strong> berkas<br>
+                        • File Duplikat Dilewati: <strong>{skipped}</strong> berkas<br>
                         • Tercatat di Google Sheet & Email Notifikasi Admin.
                     </div>
                     """, unsafe_allow_html=True)
+
+                    if result.get("folderUrl"):
+                        st.markdown(f"[📂 Buka Folder Backup]({result['folderUrl']})")
                 else:
                     st.error("Gagal mengirim laporan: " + result.get("message", "Terjadi kesalahan"))
 
@@ -593,4 +683,9 @@ else:
         st.session_state.site = ""
         st.session_state.created_folder_url = ""
         st.session_state.pilot_name = ""
+        st.session_state.pilot_email = ""
+        st.session_state.custom_drone = ""
+        st.session_state.coords = "-6.208800, 106.845600"
+        st.session_state.lat = -6.208800
+        st.session_state.lng = 106.845600
         st.rerun()
