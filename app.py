@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="AeroSurvey Pro - Pelaporan Survey Udara",
     page_icon="✈️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"
 )
 
 # Custom CSS for polished Aerospace UI
@@ -111,16 +111,37 @@ st.markdown("""
         font-size: 0.9rem;
     }
 
-    header { visibility: hidden !important; height: 0 !important; }
-    #MainMenu { visibility: hidden !important; }
-    footer { visibility: hidden !important; }
-    [data-testid="stToolbar"],
-    [data-testid="stHeader"],
-    [data-testid="stDecoration"] {
+    /* Sembunyikan GitHub / badge Cloud / Deploy — JANGAN hide header penuh */
+      #GithubIcon,
+      a[href*="github.com"],
+      .viewerBadge_container__1QSob,
+      .styles_viewerBadge__1yB5_,
+      .viewerBadge_link__1S137,
+      .viewerBadge_text__1JaDK {
         display: none !important;
         visibility: hidden !important;
+      }
+    
+      .stDeployButton,
+      .stAppDeployButton,
+      [data-testid="stAppDeployButton"] {
+        display: none !important;
+        visibility: hidden !important;
+      }
+    
+      /* Toolbar kanan (menu ⋮) boleh disembunyikan jika tidak perlu */
+      [data-testid="stToolbar"] {
+        visibility: hidden !important;
         height: 0 !important;
-  }
+      }
+    
+      /* PASTIKAN tombol buka sidebar tetap terlihat */
+      [data-testid="stExpandSidebarButton"],
+      [data-testid="collapsedControl"],
+      button[kind="header"] {
+        visibility: visible !important;
+        display: inline-flex !important;
+      }
 </style>
 """, unsafe_allow_html=True)
 
