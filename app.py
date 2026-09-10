@@ -110,6 +110,17 @@ st.markdown("""
         margin: 0.85rem 0;
         font-size: 0.9rem;
     }
+
+    /* Sembunyikan tombol/menu yang mengarah ke GitHub */
+    a[href*="github.com"] {
+        display: none !important;
+    }
+
+    /* Opsional: sembunyikan seluruh toolbar / menu Streamlit */
+    /* [data-testid="stToolbar"] { display: none !important; } */
+    /* #MainMenu { visibility: hidden; } */
+    /* footer { visibility: hidden; } */
+    /* header { visibility: hidden; } */
 </style>
 """, unsafe_allow_html=True)
 
