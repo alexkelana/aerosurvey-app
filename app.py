@@ -7,6 +7,7 @@ from streamlit_folium import st_folium
 import pandas as pd
 import os
 import re
+import base64
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -722,13 +723,43 @@ with tab_help:
     if os.path.exists(pdf_path):
         with open(pdf_path, "rb") as pdf_file:
             pdf_bytes = pdf_file.read()
-            st.download_button(
-                label="📄 Unduh Dokumen SOP (PDF)",
-                data=pdf_bytes,
-                file_name="SOP_Pelaporan_Survey_Aerial.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key="btn_download_sop"
+
+        st.download_button(
+            label="📄 Unduh Dokumen SOP (PDF)",
+            data=pdf_bytes,
+            file_name="SOP_Pelaporan_Survey_Aerial.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            key="btn_download_sop"
+        )
+
+        st.markdown("##### Preview SOP")
+        # st.pdf tersedia di Streamlit versi baru; fallback iframe base64 jika belum ada
+        preview_ok = False
+        if hasattr(st, "pdf"):
+            try:
+                st.pdf(pdf_bytes, height=720)
+                preview_ok = True
+            except Exception:
+                preview_ok = False
+
+        if not preview_ok:
+            b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+            st.markdown(
+                f"""
+                <iframe
+                    src="data:application/pdf;base64,{b64}#toolbar=1&navpanes=0"
+                    width="100%"
+                    height="720"
+                    style="border:1px solid #e2e8f0; border-radius:8px;"
+                    title="Preview SOP Pelaporan Survey Aerial">
+                </iframe>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                "Jika preview tidak tampil di perangkat/browser tertentu (terutama mobile), "
+                "gunakan tombol unduh di atas."
             )
     else:
         st.info("File SOP belum tersedia di server app (`SOP_Pelaporan_Survey_Aerial.pdf`).")
@@ -742,4 +773,4 @@ with tab_help:
     4. Admin menerima email + data masuk Google Sheet / folder backup  
     """)
 
-    st.caption("AeroSurvey Pro v2.7 — Aerial Jaya")
+    st.caption("AeroSurvey Pro v2.7 by Aerial Jaya")
