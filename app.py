@@ -130,11 +130,26 @@ MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "O
 now = datetime.datetime.now()
 current_month_label = f"{MONTH_NAMES[now.month - 1]} {now.year}"
 
+DEFAULT_ORDER_SITES_MAP = (
+    "https://www.google.com/maps/d/edit?mid=1yT10qibBTAx1W6d369YWkFsK8l2cD74&usp=drive_link"
+)
+
 if "config" not in st.session_state:
     st.session_state.config = {
         "ADMIN_EMAIL": get_secret("ADMIN_EMAIL", "alex.kelana@gmail.com"),
         "APPS_SCRIPT_URL": get_secret("APPS_SCRIPT_URL", ""),
         "ADMIN_PIN": get_secret("ADMIN_PIN", "1234"),
+        # ID Drive / Sheet (default sama dengan Code.gs; bisa diubah di tab Pengaturan)
+        "UPLOAD_ROOT_FOLDER_ID": get_secret(
+            "UPLOAD_ROOT_FOLDER_ID", "1GA6jN45s12IjgkXDGvdYthEButlFzzPg"
+        ),
+        "ADMIN_BACKUP_ROOT_FOLDER_ID": get_secret(
+            "ADMIN_BACKUP_ROOT_FOLDER_ID", "1yxQR6lFiYlTxgaw582mqJHN4NsDRM4mJ"
+        ),
+        "SUMMARY_SHEET_ID": get_secret(
+            "SUMMARY_SHEET_ID", "16gL_bDtrJSuJ_wyyVmX5oVNSVvAY0j_p464L8XBBnLM"
+        ),
+        "ORDER_SITES_MAP_URL": get_secret("ORDER_SITES_MAP_URL", DEFAULT_ORDER_SITES_MAP),
     }
 
 if "role" not in st.session_state:
@@ -204,6 +219,22 @@ def is_valid_email(email: str) -> bool:
     return bool(re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", (email or "").strip()))
 
 
+def backend_config_payload():
+    """Kirim ID folder/sheet ke backend (whitelist di Code.gs ALLOWED_CONFIG_OVERRIDE)."""
+    cfg = st.session_state.config
+    out = {}
+    for key in (
+        "ADMIN_EMAIL",
+        "UPLOAD_ROOT_FOLDER_ID",
+        "ADMIN_BACKUP_ROOT_FOLDER_ID",
+        "SUMMARY_SHEET_ID",
+    ):
+        val = (cfg.get(key) or "").strip()
+        if val:
+            out[key] = val
+    return out
+
+
 def create_drive_folder(site_name, month_str, email_pilot):
     """Payload keys MUST match Code.gs: site, monthLabelStr, pilotEmail"""
     api_url = st.session_state.config.get("APPS_SCRIPT_URL", "").strip()
@@ -214,7 +245,8 @@ def create_drive_folder(site_name, month_str, email_pilot):
                 "action": "createFolder",
                 "site": site_name,
                 "monthLabelStr": month_str,
-                "pilotEmail": email_pilot
+                "pilotEmail": email_pilot,
+                "config": backend_config_payload(),
             }
             res = requests.post(api_url, json=payload, timeout=25)
             return res.json()
@@ -255,6 +287,7 @@ def submit_survey_report(report_data):
                 "weather": report_data.get("weather", ""),
                 "windSpeed": report_data.get("windSpeed", ""),
                 "flightDuration": report_data.get("flightDuration", ""),
+                "config": backend_config_payload(),
             }
             res = requests.post(api_url, json=payload, timeout=45)
             return res.json()
@@ -576,14 +609,14 @@ with tab_settings:
     st.divider()
 
     if st.session_state.role == "admin":
-        st.subheader("Konfigurasi Backend")
+        st.subheader("Konfigurasi Backend & Google Drive")
         new_apps_url = st.text_input(
             "URL Deployment Google Apps Script (Web App)",
             value=st.session_state.config.get("APPS_SCRIPT_URL", ""),
             key="cfg_apps_url"
         )
         new_admin_email = st.text_input(
-            "Email Notifikasi Admin",
+            "Email Notifikasi Admin (bisa beberapa, pisah koma)",
             value=st.session_state.config.get("ADMIN_EMAIL", ""),
             key="cfg_admin_email"
         )
@@ -594,15 +627,49 @@ with tab_settings:
             key="cfg_admin_pin"
         )
 
+        st.markdown("##### ID Folder & Sheet Google")
+        new_upload_folder = st.text_input(
+            "ID Folder Upload (root bulanan)",
+            value=st.session_state.config.get("UPLOAD_ROOT_FOLDER_ID", ""),
+            help="ID folder Google Drive tempat folder bulan + site dibuat untuk pilot upload",
+            key="cfg_upload_folder"
+        )
+        new_backup_folder = st.text_input(
+            "ID Folder Backup Admin",
+            value=st.session_state.config.get("ADMIN_BACKUP_ROOT_FOLDER_ID", ""),
+            help="ID folder root backup admin (hasil dedup copy)",
+            key="cfg_backup_folder"
+        )
+        new_sheet_id = st.text_input(
+            "ID Google Sheet Rekap",
+            value=st.session_state.config.get("SUMMARY_SHEET_ID", ""),
+            help="ID spreadsheet rekap laporan. Kosongkan hanya jika ingin backend auto-create.",
+            key="cfg_sheet_id"
+        )
+        new_map_url = st.text_input(
+            "Link Order Sites Map",
+            value=st.session_state.config.get("ORDER_SITES_MAP_URL", DEFAULT_ORDER_SITES_MAP),
+            help="URL Google My Maps / peta order sites (tampil di tab Bantuan)",
+            key="cfg_map_url"
+        )
+
         if st.button("Simpan Pengaturan", key="btn_save_config"):
             st.session_state.config["APPS_SCRIPT_URL"] = new_apps_url.strip()
             st.session_state.config["ADMIN_EMAIL"] = new_admin_email.strip()
             st.session_state.config["ADMIN_PIN"] = new_admin_pin.strip()
-            st.success("Pengaturan disimpan untuk sesi ini. Untuk permanen, ubah juga secrets.toml.")
+            st.session_state.config["UPLOAD_ROOT_FOLDER_ID"] = new_upload_folder.strip()
+            st.session_state.config["ADMIN_BACKUP_ROOT_FOLDER_ID"] = new_backup_folder.strip()
+            st.session_state.config["SUMMARY_SHEET_ID"] = new_sheet_id.strip()
+            st.session_state.config["ORDER_SITES_MAP_URL"] = new_map_url.strip() or DEFAULT_ORDER_SITES_MAP
+            st.success(
+                "Pengaturan disimpan untuk sesi ini. "
+                "ID folder/sheet akan dikirim ke backend saat create folder & submit laporan."
+            )
 
         st.caption(
-            "Catatan: perubahan PIN/URL di sini hanya berlaku di sesi browser ini. "
-            "Agar permanen, set di `.streamlit/secrets.toml` atau Streamlit Cloud Secrets."
+            "Perubahan di sini berlaku di sesi browser ini. "
+            "Agar permanen: set di `.streamlit/secrets.toml` / Cloud Secrets, "
+            "dan pastikan `Code.gs` sudah di-deploy dengan whitelist CONFIG terbaru."
         )
 
         st.divider()
@@ -638,8 +705,9 @@ with tab_settings:
 # ------------------------------------------------------------------------------
 with tab_help:
     st.subheader("Tautan Cepat")
-    st.markdown("""
-    <a href="https://www.google.com/maps/d/edit?mid=1yT10qibBTAx1W6d369YWkFsK8l2cD74&usp=drive_link"
+    map_url = st.session_state.config.get("ORDER_SITES_MAP_URL", DEFAULT_ORDER_SITES_MAP)
+    st.markdown(f"""
+    <a href="{map_url}"
        target="_blank" style="text-decoration:none;">
         <button style="width:100%; max-width:420px; padding:10px 14px; border-radius:8px;
                        background-color:#eff6ff; color:#0284c7; border:1px solid #bfdbfe;
@@ -674,4 +742,4 @@ with tab_help:
     4. Admin menerima email + data masuk Google Sheet / folder backup  
     """)
 
-    st.caption("AeroSurvey Pro v2.6 — tanpa sidebar · Aerial Jaya")
+    st.caption("AeroSurvey Pro v2.7 — Aerial Jaya")
