@@ -111,16 +111,16 @@ st.markdown("""
         font-size: 0.9rem;
     }
 
-    /* Sembunyikan tombol/menu yang mengarah ke GitHub */
-    a[href*="github.com"] {
+    header { visibility: hidden !important; height: 0 !important; }
+    #MainMenu { visibility: hidden !important; }
+    footer { visibility: hidden !important; }
+    [data-testid="stToolbar"],
+    [data-testid="stHeader"],
+    [data-testid="stDecoration"] {
         display: none !important;
-    }
-
-    /* Opsional: sembunyikan seluruh toolbar / menu Streamlit */
-    /* [data-testid="stToolbar"] { display: none !important; } */
-    /* #MainMenu { visibility: hidden; } */
-    /* footer { visibility: hidden; } */
-    /* header { visibility: hidden; } */
+        visibility: hidden !important;
+        height: 0 !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
