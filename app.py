@@ -353,9 +353,9 @@ with tab_form:
         input_site = st.text_input(
             "Nama Site / ID Tower *",
             value=st.session_state.site,
-            placeholder="Contoh: SITE-A atau PK1276",
+            placeholder="Contoh: SUM-WSM-0014-M-P atau 03SPA0050",
             disabled=st.session_state.is_phase1_completed,
-            help="Masukkan kode atau nama lokasi tower survey",
+            help="Masukkan Site ID tower survey ",
             key="form_site"
         )
 
