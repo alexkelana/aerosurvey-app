@@ -7,7 +7,6 @@ from streamlit_folium import st_folium
 import pandas as pd
 import os
 import re
-import base64
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -772,7 +771,6 @@ with tab_help:
     if os.path.exists(pdf_path):
         with open(pdf_path, "rb") as pdf_file:
             pdf_bytes = pdf_file.read()
-
         st.download_button(
             label="📄 Unduh Dokumen SOP (PDF)",
             data=pdf_bytes,
@@ -781,34 +779,6 @@ with tab_help:
             use_container_width=True,
             key="btn_download_sop"
         )
-
-        st.markdown("##### Preview file lokal")
-        preview_ok = False
-        if hasattr(st, "pdf"):
-            try:
-                st.pdf(pdf_bytes, height=720)
-                preview_ok = True
-            except Exception:
-                preview_ok = False
-
-        if not preview_ok:
-            b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-            st.markdown(
-                f"""
-                <iframe
-                    src="data:application/pdf;base64,{b64}#toolbar=1&navpanes=0"
-                    width="100%"
-                    height="720"
-                    style="border:1px solid #e2e8f0; border-radius:8px;"
-                    title="Preview SOP Pelaporan Survey Aerial">
-                </iframe>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.caption(
-                "Jika preview lokal tidak tampil (sering di Chrome/mobile), "
-                "gunakan **Buka SOP di Google Drive** atau tombol unduh."
-            )
     else:
         st.info("File SOP lokal belum tersedia di server app (`SOP_Pelaporan_Survey_Aerial.pdf`).")
 
