@@ -9,3 +9,9 @@ font = "sans serif"
 headless = true
 enableCORS = false
 enableXsrfProtection = false
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
