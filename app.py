@@ -746,7 +746,7 @@ with tab_help:
             </button>
         </a>
         """, unsafe_allow_html=True)
-        with st.expander("Preview SOP dari Google Drive (jika diizinkan browser)", expanded=False):
+        with st.expander("Preview SOP dari Google Drive", expanded=False):
             st.markdown(
                 f"""
                 <iframe
@@ -760,7 +760,7 @@ with tab_help:
                 """,
                 unsafe_allow_html=True,
             )
-            st.caption("Jika iframe diblokir Chrome, gunakan tombol buka di Google Drive atau unduh di bawah.")
+            st.caption("Jika preview diblokir Chrome, gunakan tombol buka di Google Drive atau unduh di bawah.")
     else:
         st.caption(
             "Link SOP Google Drive belum diatur. "
