@@ -111,16 +111,43 @@ st.markdown("""
         font-size: 0.9rem;
     }
 
-    header { visibility: hidden !important; height: 0 !important; }
-    #MainMenu { visibility: hidden !important; }
-    footer { visibility: hidden !important; }
-    [data-testid="stToolbar"],
-    [data-testid="stHeader"],
-    [data-testid="stDecoration"] {
-      display: none !important;
-      visibility: hidden !important;
-      height: 0 !important;
-    }
+    /* Header transparan / tidak mengganggu */
+  [data-testid="stHeader"] {
+    background: transparent !important;
+    color: transparent !important;
+  }
+
+  /* Sembunyikan isi header (GitHub, toolbar, dll.) */
+  [data-testid="stHeader"] > * {
+    visibility: hidden !important;
+  }
+
+  /* Tombol buka sidebar: tampilkan lagi + posisikan di kiri */
+  [data-testid="stExpandSidebarButton"],
+  [data-testid="collapsedControl"] {
+    visibility: visible !important;
+    display: inline-flex !important;
+    position: fixed !important;
+    left: 0.6rem !important;
+    top: 0.6rem !important;
+    z-index: 999999 !important;
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+    padding: 0.35rem !important;
+  }
+
+  /* Opsional: sembunyikan GitHub / Deploy jika masih lolos */
+  #GithubIcon,
+  a[href*="github.com"],
+  .stDeployButton,
+  .stAppDeployButton,
+  [data-testid="stAppDeployButton"],
+  [data-testid="stToolbar"] {
+    display: none !important;
+    visibility: hidden !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
