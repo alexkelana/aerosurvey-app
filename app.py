@@ -151,7 +151,12 @@ if "config" not in st.session_state:
             "SUMMARY_SHEET_ID", "16gL_bDtrJSuJ_wyyVmX5oVNSVvAY0j_p464L8XBBnLM"
         ),
         "ORDER_SITES_MAP_URL": get_secret("ORDER_SITES_MAP_URL", DEFAULT_ORDER_SITES_MAP),
+        "SOP_DRIVE_URL": get_secret("SOP_DRIVE_URL", ""),
     }
+
+# Migrasi sesi lama: pastikan key baru ada
+if "SOP_DRIVE_URL" not in st.session_state.config:
+    st.session_state.config["SOP_DRIVE_URL"] = get_secret("SOP_DRIVE_URL", "")
 
 if "role" not in st.session_state:
     st.session_state.role = "petugas"
@@ -653,6 +658,12 @@ with tab_settings:
             help="URL Google My Maps / peta order sites (tampil di tab Bantuan)",
             key="cfg_map_url"
         )
+        new_sop_drive_url = st.text_input(
+            "Link SOP di Google Drive",
+            value=st.session_state.config.get("SOP_DRIVE_URL", ""),
+            help="URL file SOP (share link). Contoh: https://drive.google.com/file/d/FILE_ID/view",
+            key="cfg_sop_drive_url"
+        )
 
         if st.button("Simpan Pengaturan", key="btn_save_config"):
             st.session_state.config["APPS_SCRIPT_URL"] = new_apps_url.strip()
@@ -662,6 +673,7 @@ with tab_settings:
             st.session_state.config["ADMIN_BACKUP_ROOT_FOLDER_ID"] = new_backup_folder.strip()
             st.session_state.config["SUMMARY_SHEET_ID"] = new_sheet_id.strip()
             st.session_state.config["ORDER_SITES_MAP_URL"] = new_map_url.strip() or DEFAULT_ORDER_SITES_MAP
+            st.session_state.config["SOP_DRIVE_URL"] = new_sop_drive_url.strip()
             st.success(
                 "Pengaturan disimpan untuk sesi ini. "
                 "ID folder/sheet akan dikirim ke backend saat create folder & submit laporan."
@@ -719,6 +731,43 @@ with tab_help:
     """, unsafe_allow_html=True)
 
     st.subheader("Dokumen SOP")
+
+    sop_drive_url = (st.session_state.config.get("SOP_DRIVE_URL") or "").strip()
+    if sop_drive_url:
+        # Konversi link /view menjadi /preview agar nyaman di tab baru / embed
+        sop_open_url = sop_drive_url
+        if "/view" in sop_drive_url:
+            sop_open_url = sop_drive_url.replace("/view", "/preview")
+        st.markdown(f"""
+        <a href="{sop_drive_url}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+            <button style="width:100%; max-width:420px; padding:10px 14px; border-radius:8px;
+                           background-color:#ecfdf5; color:#047857; border:1px solid #a7f3d0;
+                           font-weight:600; cursor:pointer; margin-bottom:8px;">
+                📂 Buka SOP di Google Drive ↗
+            </button>
+        </a>
+        """, unsafe_allow_html=True)
+        with st.expander("Preview SOP dari Google Drive (jika diizinkan browser)", expanded=False):
+            st.markdown(
+                f"""
+                <iframe
+                    src="{sop_open_url}"
+                    width="100%"
+                    height="640"
+                    style="border:1px solid #e2e8f0; border-radius:8px;"
+                    allow="autoplay"
+                    title="Preview SOP Google Drive">
+                </iframe>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.caption("Jika iframe diblokir Chrome, gunakan tombol buka di Google Drive atau unduh di bawah.")
+    else:
+        st.caption(
+            "Link SOP Google Drive belum diatur. "
+            "Admin dapat mengisinya di tab **Pengaturan** (setelah PIN)."
+        )
+
     pdf_path = os.path.join(os.path.dirname(__file__), "SOP_Pelaporan_Survey_Aerial.pdf")
     if os.path.exists(pdf_path):
         with open(pdf_path, "rb") as pdf_file:
@@ -733,8 +782,7 @@ with tab_help:
             key="btn_download_sop"
         )
 
-        st.markdown("##### Preview SOP")
-        # st.pdf tersedia di Streamlit versi baru; fallback iframe base64 jika belum ada
+        st.markdown("##### Preview file lokal")
         preview_ok = False
         if hasattr(st, "pdf"):
             try:
@@ -758,11 +806,11 @@ with tab_help:
                 unsafe_allow_html=True,
             )
             st.caption(
-                "Jika preview tidak tampil di perangkat/browser tertentu (terutama mobile), "
-                "gunakan tombol unduh di atas."
+                "Jika preview lokal tidak tampil (sering di Chrome/mobile), "
+                "gunakan **Buka SOP di Google Drive** atau tombol unduh."
             )
     else:
-        st.info("File SOP belum tersedia di server app (`SOP_Pelaporan_Survey_Aerial.pdf`).")
+        st.info("File SOP lokal belum tersedia di server app (`SOP_Pelaporan_Survey_Aerial.pdf`).")
 
     st.divider()
     st.markdown("""
@@ -772,5 +820,5 @@ with tab_help:
     3. Klik *Selesai Upload* → isi data & koordinat → kirim laporan  
     4. Admin menerima email + data masuk Google Sheet / folder backup  
     """)
-
+    
     st.caption("AeroSurvey Pro v2.7 by Aerial Jaya")
