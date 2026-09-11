@@ -739,8 +739,6 @@ with tab_form:
         with col_gps_hint:
             st.caption(
                 "Gunakan di lokasi tower (izin lokasi browser harus aktif). "
-                "Atau ketik koordinat manual / klik peta di bawah. "
-                "HTTPS diperlukan agar GPS browser berfungsi (Streamlit Cloud sudah HTTPS)."
             )
             if st.session_state.get("gps_detected"):
                 st.success(f"GPS terdeteksi: {st.session_state.coords}")
