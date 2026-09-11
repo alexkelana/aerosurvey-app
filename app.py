@@ -7,6 +7,9 @@ from streamlit_folium import st_folium
 import pandas as pd
 import os
 import re
+from io import BytesIO
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -224,6 +227,165 @@ def is_valid_email(email: str) -> bool:
     return bool(re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", (email or "").strip()))
 
 
+def _ratio_to_float(value):
+    """Convert IFDRational / tuple / number to float."""
+    try:
+        return float(value)
+    except Exception:
+        try:
+            return float(value[0]) / float(value[1]) if value[1] else 0.0
+        except Exception:
+            return None
+
+
+def _dms_to_decimal(dms, ref):
+    """Convert GPS DMS (degrees, minutes, seconds) + ref to signed decimal degrees."""
+    if not dms or len(dms) < 3:
+        return None
+    deg = _ratio_to_float(dms[0])
+    minutes = _ratio_to_float(dms[1])
+    seconds = _ratio_to_float(dms[2])
+    if deg is None or minutes is None or seconds is None:
+        return None
+    decimal = deg + minutes / 60.0 + seconds / 3600.0
+    if ref in ("S", "W"):
+        decimal = -decimal
+    return decimal
+
+
+def extract_image_exif(file_bytes, filename=""):
+    """
+    Extract key EXIF / GPS fields from an image for the built-in inspector.
+    Returns a dict with status and metadata fields.
+    """
+    result = {
+        "file": filename,
+        "status": "FAIL",
+        "latitude": None,
+        "longitude": None,
+        "altitude_m": None,
+        "datetime": None,
+        "camera": None,
+        "notes": "",
+    }
+    try:
+        img = Image.open(BytesIO(file_bytes))
+        raw = img._getexif() if hasattr(img, "_getexif") else None
+        if not raw:
+            # Pillow 10+ alternative
+            raw = img.getexif() if hasattr(img, "getexif") else None
+            if raw is not None:
+                # getexif() returns Exif object; convert to dict of tag ids
+                try:
+                    raw = {k: raw.get(k) for k in raw.keys()}
+                except Exception:
+                    pass
+        if not raw:
+            result["notes"] = "Tidak ada EXIF pada file"
+            return result
+
+        # Map standard tags
+        tagged = {}
+        for tag_id, value in raw.items():
+            name = TAGS.get(tag_id, tag_id)
+            tagged[name] = value
+
+        result["datetime"] = (
+            tagged.get("DateTimeOriginal")
+            or tagged.get("DateTime")
+            or tagged.get("DateTimeDigitized")
+        )
+        make = tagged.get("Make") or ""
+        model = tagged.get("Model") or ""
+        result["camera"] = f"{make} {model}".strip() or None
+
+        # GPS IFD
+        gps_info = tagged.get("GPSInfo")
+        if gps_info:
+            gps = {}
+            for k, v in gps_info.items():
+                gps[GPSTAGS.get(k, k)] = v
+
+            lat = _dms_to_decimal(gps.get("GPSLatitude"), gps.get("GPSLatitudeRef", "N"))
+            lng = _dms_to_decimal(gps.get("GPSLongitude"), gps.get("GPSLongitudeRef", "E"))
+            alt = _ratio_to_float(gps.get("GPSAltitude")) if gps.get("GPSAltitude") is not None else None
+            if alt is not None and gps.get("GPSAltitudeRef") in (1, b"\x01", "1"):
+                alt = -alt
+
+            result["latitude"] = round(lat, 6) if lat is not None else None
+            result["longitude"] = round(lng, 6) if lng is not None else None
+            result["altitude_m"] = round(alt, 2) if alt is not None else None
+
+        has_gps = result["latitude"] is not None and result["longitude"] is not None
+        has_time = bool(result["datetime"])
+        if has_gps and has_time:
+            result["status"] = "OK"
+            result["notes"] = "Geotag & waktu tersedia"
+        elif has_gps:
+            result["status"] = "PARTIAL"
+            result["notes"] = "GPS ada, waktu tidak terbaca"
+        elif has_time:
+            result["status"] = "PARTIAL"
+            result["notes"] = "Waktu ada, GPS tidak terbaca"
+        else:
+            result["status"] = "FAIL"
+            result["notes"] = "GPS & waktu tidak ditemukan"
+    except Exception as e:
+        result["notes"] = f"Gagal baca: {e}"
+    return result
+
+
+def render_exif_inspector():
+    """UI: built-in EXIF / GPS inspector for field photos."""
+    st.markdown("### **Cek Metadata EXIF (Built-in Inspector)**")
+    st.caption(
+        "Pilih foto JPG/JPEG dari drone atau HP sebelum diunggah ke Google Drive. "
+        "Video biasanya tidak berisi EXIF yang sama — cek foto secara terpisah."
+    )
+    files = st.file_uploader(
+        "Pilih satu atau beberapa foto (JPG/JPEG)",
+        type=["jpg", "jpeg", "tif", "tiff"],
+        accept_multiple_files=True,
+        key="exif_inspector_uploader",
+    )
+    if not files:
+        return
+
+    rows = []
+    for f in files:
+        data = f.read()
+        meta = extract_image_exif(data, f.name)
+        rows.append({
+            "File": meta["file"],
+            "Status": meta["status"],
+            "Latitude": meta["latitude"],
+            "Longitude": meta["longitude"],
+            "Altitude (m)": meta["altitude_m"],
+            "DateTime": meta["datetime"],
+            "Kamera": meta["camera"],
+            "Catatan": meta["notes"],
+        })
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True)
+
+    ok_n = sum(1 for r in rows if r["Status"] == "OK")
+    partial_n = sum(1 for r in rows if r["Status"] == "PARTIAL")
+    fail_n = sum(1 for r in rows if r["Status"] == "FAIL")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("OK (GPS+Waktu)", ok_n)
+    c2.metric("Sebagian", partial_n)
+    c3.metric("Gagal / Tanpa EXIF", fail_n)
+
+    if fail_n or partial_n:
+        st.warning(
+            "Ada file yang belum lolos cek penuh. Perbaiki geotag di lapangan "
+            "(Photo EXIF Editor / pastikan GPS drone lock) sebelum upload ke Drive."
+        )
+    elif ok_n:
+        st.success("Semua foto yang diperiksa memiliki GPS dan waktu. Siap diunggah ke folder Drive.")
+
+
 def backend_config_payload():
     """Kirim ID folder/sheet ke backend (whitelist di Code.gs ALLOWED_CONFIG_OVERRIDE)."""
     cfg = st.session_state.config
@@ -323,7 +485,7 @@ st.markdown(f"""
 <div class="app-header">
     <div>
         <h1 class="app-title">✈️ AeroSurvey Pro</h1>
-        <div class="app-subtitle">Pelaporan Survey Aerial</div>
+        <div class="app-subtitle">Pelaporan Survey Aerial — Alur 2 Tahap</div>
     </div>
     <div style="text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
         <span class="role-pill">{role_label}</span>
@@ -345,6 +507,10 @@ tab_form, tab_settings, tab_help = st.tabs([
 # TAB 1: FORMULIR SURVEY
 # ------------------------------------------------------------------------------
 with tab_form:
+    # Built-in EXIF inspector (sebelum / selama alur upload)
+    with st.expander("🔍 Cek Metadata EXIF foto (disarankan sebelum upload ke Drive)", expanded=False):
+        render_exif_inspector()
+
     st.markdown("### **Tahap 1: Buat Folder Upload di Google Drive**")
 
     col_site, col_email = st.columns([1, 1])
@@ -353,9 +519,9 @@ with tab_form:
         input_site = st.text_input(
             "Nama Site / ID Tower *",
             value=st.session_state.site,
-            placeholder="Contoh: SUM-WSM-0014-M-P atau 03SPA0050",
+            placeholder="Contoh: SITE-A atau PK1276",
             disabled=st.session_state.is_phase1_completed,
-            help="Masukkan Site ID tower survey ",
+            help="Masukkan kode atau nama lokasi tower survey",
             key="form_site"
         )
 
@@ -746,7 +912,7 @@ with tab_help:
             </button>
         </a>
         """, unsafe_allow_html=True)
-        with st.expander("Preview SOP dari Google Drive", expanded=False):
+        with st.expander("Preview SOP dari Google Drive (jika diizinkan browser)", expanded=False):
             st.markdown(
                 f"""
                 <iframe
@@ -760,7 +926,7 @@ with tab_help:
                 """,
                 unsafe_allow_html=True,
             )
-            st.caption("Jika preview diblokir Chrome, gunakan tombol buka di Google Drive atau unduh di bawah.")
+            st.caption("Jika iframe diblokir Chrome, gunakan tombol buka di Google Drive atau unduh di bawah.")
     else:
         st.caption(
             "Link SOP Google Drive belum diatur. "
@@ -785,10 +951,10 @@ with tab_help:
     st.divider()
     st.markdown("""
     **Alur kerja singkat**
-    1. Tab **Formulir Survey** → buat folder upload  
-    2. Upload foto/video (pastikan EXIF GPS aktif)  
-    3. Klik *Selesai Upload* → isi data & koordinat → kirim laporan  
+    1. Tab **Formulir Survey** → cek EXIF foto (inspector bawaan) jika perlu  
+    2. Buat folder upload → unggah ke Drive (metadata sudah valid)  
+    3. *Selesai Upload* → isi data & koordinat → kirim laporan  
     4. Admin menerima email + data masuk Google Sheet / folder backup  
     """)
-    
-    st.caption("AeroSurvey Pro v2.7 by Aerial Jaya")
+
+    st.caption("AeroSurvey Pro v3.0 · Aerial Jaya")
