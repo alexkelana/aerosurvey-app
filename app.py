@@ -200,6 +200,56 @@ if "lng" not in st.session_state:
 if "reports" not in st.session_state:
     st.session_state.reports = []
 
+if "gps_detected" not in st.session_state:
+    st.session_state.gps_detected = False
+
+if "map_token" not in st.session_state:
+    st.session_state.map_token = "init"
+
+if "coord_text_input" not in st.session_state:
+    st.session_state.coord_text_input = st.session_state.coords
+
+
+def consume_gps_query_params():
+    """Baca gps_lat/gps_lng dari URL lalu tulis ke session_state (sebelum widget koordinat)."""
+    try:
+        qp = st.query_params
+        raw_lat = qp.get("gps_lat")
+        raw_lng = qp.get("gps_lng")
+        if raw_lat is None or raw_lng is None:
+            return False
+        if isinstance(raw_lat, (list, tuple)):
+            raw_lat = raw_lat[0]
+        if isinstance(raw_lng, (list, tuple)):
+            raw_lng = raw_lng[0]
+        dlat = round(float(raw_lat), 6)
+        dlng = round(float(raw_lng), 6)
+        if not (-90 <= dlat <= 90 and -180 <= dlng <= 180):
+            return False
+        new_c = f"{dlat}, {dlng}"
+        st.session_state.lat = dlat
+        st.session_state.lng = dlng
+        st.session_state.coords = new_c
+        st.session_state.coord_text_input = new_c
+        st.session_state.gps_detected = True
+        st.session_state.map_token = f"{dlat}_{dlng}"
+        # Hapus param dari URL (hindari loop)
+        try:
+            del st.query_params["gps_lat"]
+        except Exception:
+            pass
+        try:
+            del st.query_params["gps_lng"]
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+# Harus dipanggil di awal run, sebelum widget text_input koordinat
+consume_gps_query_params()
+
 DRONE_OPTIONS = [
     "DJI Mavic 3 Enterprise (M3E)",
     "DJI Mavic 3 Thermal (M3T)",
@@ -644,48 +694,15 @@ with tab_form:
 
         st.markdown("#### **Titik Koordinat Lokasi (Lat, Long)**")
 
-        # Ambil hasil deteksi GPS dari query params (diisi oleh tombol geolocation JS)
-        try:
-            qp = st.query_params
-            gps_lat = qp.get("gps_lat")
-            gps_lng = qp.get("gps_lng")
-            if gps_lat is not None and gps_lng is not None:
-                # query_params bisa string atau list
-                if isinstance(gps_lat, list):
-                    gps_lat = gps_lat[0]
-                if isinstance(gps_lng, list):
-                    gps_lng = gps_lng[0]
-                dlat = round(float(gps_lat), 6)
-                dlng = round(float(gps_lng), 6)
-                if -90 <= dlat <= 90 and -180 <= dlng <= 180:
-                    new_c = f"{dlat}, {dlng}"
-                    st.session_state.coords = new_c
-                    st.session_state.lat = dlat
-                    st.session_state.lng = dlng
-                    st.session_state.gps_detected = True
-                    # Reset widget text agar ikut nilai GPS baru
-                    if "coord_text_input" in st.session_state:
-                        del st.session_state["coord_text_input"]
-                    # Bersihkan param agar tidak menimpa input manual berulang
-                    try:
-                        del st.query_params["gps_lat"]
-                        del st.query_params["gps_lng"]
-                    except Exception:
-                        pass
-                    st.rerun()
-        except Exception:
-            pass
-
+        # Widget terikat ke session_state.coord_text_input (di-set oleh GPS di awal script)
         coord_input = st.text_input(
             "Koordinat Desimal (Format: Latitude, Longitude) *",
-            value=st.session_state.coords,
-            key="coord_text_input"
+            key="coord_text_input",
         )
 
         col_gps, col_gps_hint = st.columns([1, 2])
         with col_gps:
             st.markdown("**Deteksi lokasi perangkat**")
-            # Tombol HTML: minta izin GPS browser, lalu reload app dengan query params
             components.html(
                 """
                 <div style="font-family: sans-serif;">
@@ -715,12 +732,30 @@ with tab_form:
                     function (pos) {
                       const lat = pos.coords.latitude.toFixed(6);
                       const lng = pos.coords.longitude.toFixed(6);
-                      status.textContent = "Lokasi: " + lat + ", " + lng + " — memuat ulang...";
-                      const parentWin = window.parent;
-                      const url = new URL(parentWin.location.href);
-                      url.searchParams.set("gps_lat", lat);
-                      url.searchParams.set("gps_lng", lng);
-                      parentWin.location.href = url.toString();
+                      status.textContent = "Ditemukan: " + lat + ", " + lng + " — menerapkan...";
+                      // Naik ke frame terluar app Streamlit (bukan hanya parent iframe komponen)
+                      let target = window;
+                      try { target = window.top || window.parent || window; } catch (e) {
+                        target = window.parent || window;
+                      }
+                      try {
+                        const url = new URL(target.location.href);
+                        url.searchParams.set("gps_lat", lat);
+                        url.searchParams.set("gps_lng", lng);
+                        // Ganti URL + reload penuh agar query terbaca server Streamlit
+                        target.location.replace(url.toString());
+                      } catch (e) {
+                        // Fallback: parent
+                        try {
+                          const url2 = new URL(window.parent.location.href);
+                          url2.searchParams.set("gps_lat", lat);
+                          url2.searchParams.set("gps_lng", lng);
+                          window.parent.location.replace(url2.toString());
+                        } catch (e2) {
+                          status.textContent = "Lokasi: " + lat + ", " + lng +
+                            " — salin manual ke kotak koordinat (reload diblokir browser).";
+                        }
+                      }
                     },
                     function (err) {
                       let msg = "Gagal deteksi lokasi.";
@@ -729,7 +764,7 @@ with tab_form:
                       else if (err.code === 3) msg = "Timeout. Coba lagi di area terbuka.";
                       status.textContent = msg;
                     },
-                    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+                    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
                   );
                 });
                 </script>
@@ -738,13 +773,16 @@ with tab_form:
             )
         with col_gps_hint:
             st.caption(
-                "Gunakan di lokasi tower (izin lokasi browser harus aktif). "
+                "Izinkan lokasi di browser, lalu tunggu halaman memuat ulang. "
+                "Jika textbox tidak berubah, salin angka dari status tombol ke kotak koordinat. "
+                "Alternatif: ketik manual atau klik peta."
             )
             if st.session_state.get("gps_detected"):
-                st.success(f"GPS terdeteksi: {st.session_state.coords}")
+                st.success(f"GPS diterapkan: **{st.session_state.coords}**")
 
+        # Sinkronkan textbox → lat/lng/map
         try:
-            parts = [float(x.strip()) for x in coord_input.split(",")]
+            parts = [float(x.strip()) for x in str(coord_input).split(",")]
             if len(parts) == 2 and -90 <= parts[0] <= 90 and -180 <= parts[1] <= 180:
                 current_lat, current_lng = parts[0], parts[1]
                 st.session_state.coords = f"{current_lat}, {current_lng}"
@@ -756,14 +794,13 @@ with tab_form:
             current_lat, current_lng = st.session_state.lat, st.session_state.lng
 
         st.caption("📍 Peta Interaktif (Klik pada peta untuk memilih titik lokasi survey):")
-        m = folium.Map(location=[current_lat, current_lng], zoom_start=15, control_scale=True)
+        m = folium.Map(location=[current_lat, current_lng], zoom_start=16, control_scale=True)
         folium.Marker(
             [current_lat, current_lng],
             popup=f"Titik Survey: {st.session_state.site}",
             tooltip="Titik Lokasi Terpilih",
             icon=folium.Icon(color="blue", icon="plane", prefix="fa")
         ).add_to(m)
-        # Circle kecil sebagai indikasi titik GPS
         folium.CircleMarker(
             [current_lat, current_lng],
             radius=8,
@@ -773,8 +810,10 @@ with tab_form:
             fill_opacity=0.5,
         ).add_to(m)
 
+        # key berubah saat GPS/klik → peta di-remount di titik baru
+        map_key = f"survey_leaflet_map_{st.session_state.get('map_token', 'init')}"
         try:
-            map_data = st_folium(m, height=280, use_container_width=True, key="survey_leaflet_map")
+            map_data = st_folium(m, height=280, use_container_width=True, key=map_key)
             if map_data and isinstance(map_data, dict) and map_data.get("last_clicked"):
                 clicked_lat = round(map_data["last_clicked"]["lat"], 6)
                 clicked_lng = round(map_data["last_clicked"]["lng"], 6)
@@ -783,6 +822,8 @@ with tab_form:
                     st.session_state.coords = new_coords
                     st.session_state.lat = clicked_lat
                     st.session_state.lng = clicked_lng
+                    st.session_state.coord_text_input = new_coords
+                    st.session_state.map_token = f"{clicked_lat}_{clicked_lng}"
                     st.session_state.gps_detected = False
                     st.rerun()
         except Exception:
@@ -1062,4 +1103,4 @@ with tab_help:
     4. Admin menerima email + data masuk Google Sheet / folder backup  
     """)
 
-    st.caption("AeroSurvey Pro v3.1 · Aerial Jaya")
+    st.caption("AeroSurvey Pro v3.1.1 · Aerial Jaya")
