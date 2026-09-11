@@ -536,7 +536,7 @@ st.markdown(f"""
 <div class="app-header">
     <div>
         <h1 class="app-title">✈️ AeroSurvey Pro</h1>
-        <div class="app-subtitle">Pelaporan Survey Aerial — Alur 2 Tahap</div>
+        <div class="app-subtitle">Pelaporan Survey Aerial</div>
     </div>
     <div style="text-align:right; display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
         <span class="role-pill">{role_label}</span>
