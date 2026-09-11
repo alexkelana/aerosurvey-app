@@ -10,6 +10,7 @@ import re
 from io import BytesIO
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
+import streamlit.components.v1 as components
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -642,11 +643,107 @@ with tab_form:
         st.text_input("Nama Site (Sama dengan Tahap 1)", value=st.session_state.site, disabled=True, key="site_readonly")
 
         st.markdown("#### **Titik Koordinat Lokasi (Lat, Long)**")
+
+        # Ambil hasil deteksi GPS dari query params (diisi oleh tombol geolocation JS)
+        try:
+            qp = st.query_params
+            gps_lat = qp.get("gps_lat")
+            gps_lng = qp.get("gps_lng")
+            if gps_lat is not None and gps_lng is not None:
+                # query_params bisa string atau list
+                if isinstance(gps_lat, list):
+                    gps_lat = gps_lat[0]
+                if isinstance(gps_lng, list):
+                    gps_lng = gps_lng[0]
+                dlat = round(float(gps_lat), 6)
+                dlng = round(float(gps_lng), 6)
+                if -90 <= dlat <= 90 and -180 <= dlng <= 180:
+                    new_c = f"{dlat}, {dlng}"
+                    st.session_state.coords = new_c
+                    st.session_state.lat = dlat
+                    st.session_state.lng = dlng
+                    st.session_state.gps_detected = True
+                    # Reset widget text agar ikut nilai GPS baru
+                    if "coord_text_input" in st.session_state:
+                        del st.session_state["coord_text_input"]
+                    # Bersihkan param agar tidak menimpa input manual berulang
+                    try:
+                        del st.query_params["gps_lat"]
+                        del st.query_params["gps_lng"]
+                    except Exception:
+                        pass
+                    st.rerun()
+        except Exception:
+            pass
+
         coord_input = st.text_input(
             "Koordinat Desimal (Format: Latitude, Longitude) *",
             value=st.session_state.coords,
             key="coord_text_input"
         )
+
+        col_gps, col_gps_hint = st.columns([1, 2])
+        with col_gps:
+            st.markdown("**Deteksi lokasi perangkat**")
+            # Tombol HTML: minta izin GPS browser, lalu reload app dengan query params
+            components.html(
+                """
+                <div style="font-family: sans-serif;">
+                  <button id="btn-gps" style="
+                    width: 100%;
+                    padding: 0.55rem 0.75rem;
+                    border-radius: 0.5rem;
+                    border: 1px solid #0284c7;
+                    background: #0284c7;
+                    color: white;
+                    font-weight: 600;
+                    cursor: pointer;
+                    font-size: 0.9rem;
+                  ">🎯 Deteksi Lokasi (GPS)</button>
+                  <div id="gps-status" style="font-size: 0.75rem; color: #64748b; margin-top: 6px;"></div>
+                </div>
+                <script>
+                const btn = document.getElementById("btn-gps");
+                const status = document.getElementById("gps-status");
+                btn.addEventListener("click", function () {
+                  status.textContent = "Meminta izin lokasi...";
+                  if (!navigator.geolocation) {
+                    status.textContent = "Browser tidak mendukung Geolocation.";
+                    return;
+                  }
+                  navigator.geolocation.getCurrentPosition(
+                    function (pos) {
+                      const lat = pos.coords.latitude.toFixed(6);
+                      const lng = pos.coords.longitude.toFixed(6);
+                      status.textContent = "Lokasi: " + lat + ", " + lng + " — memuat ulang...";
+                      const parentWin = window.parent;
+                      const url = new URL(parentWin.location.href);
+                      url.searchParams.set("gps_lat", lat);
+                      url.searchParams.set("gps_lng", lng);
+                      parentWin.location.href = url.toString();
+                    },
+                    function (err) {
+                      let msg = "Gagal deteksi lokasi.";
+                      if (err.code === 1) msg = "Izin lokasi ditolak. Izinkan lokasi di browser.";
+                      else if (err.code === 2) msg = "Lokasi tidak tersedia.";
+                      else if (err.code === 3) msg = "Timeout. Coba lagi di area terbuka.";
+                      status.textContent = msg;
+                    },
+                    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+                  );
+                });
+                </script>
+                """,
+                height=90,
+            )
+        with col_gps_hint:
+            st.caption(
+                "Gunakan di lokasi tower (izin lokasi browser harus aktif). "
+                "Atau ketik koordinat manual / klik peta di bawah. "
+                "HTTPS diperlukan agar GPS browser berfungsi (Streamlit Cloud sudah HTTPS)."
+            )
+            if st.session_state.get("gps_detected"):
+                st.success(f"GPS terdeteksi: {st.session_state.coords}")
 
         try:
             parts = [float(x.strip()) for x in coord_input.split(",")]
@@ -668,6 +765,15 @@ with tab_form:
             tooltip="Titik Lokasi Terpilih",
             icon=folium.Icon(color="blue", icon="plane", prefix="fa")
         ).add_to(m)
+        # Circle kecil sebagai indikasi titik GPS
+        folium.CircleMarker(
+            [current_lat, current_lng],
+            radius=8,
+            color="#0284c7",
+            fill=True,
+            fill_color="#38bdf8",
+            fill_opacity=0.5,
+        ).add_to(m)
 
         try:
             map_data = st_folium(m, height=280, use_container_width=True, key="survey_leaflet_map")
@@ -679,6 +785,7 @@ with tab_form:
                     st.session_state.coords = new_coords
                     st.session_state.lat = clicked_lat
                     st.session_state.lng = clicked_lng
+                    st.session_state.gps_detected = False
                     st.rerun()
         except Exception:
             st.caption(f"Peta statis aktif: {current_lat}, {current_lng}")
@@ -957,4 +1064,4 @@ with tab_help:
     4. Admin menerima email + data masuk Google Sheet / folder backup  
     """)
 
-    st.caption("AeroSurvey Pro v3.0 · Aerial Jaya")
+    st.caption("AeroSurvey Pro v3.1 · Aerial Jaya")
