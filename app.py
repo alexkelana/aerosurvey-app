@@ -883,7 +883,7 @@ with tab_form:
                         """, unsafe_allow_html=True)
 
                         if result.get("folderUrl"):
-                            st.markdown(f"[📂 Buka Folder Backup]({result['folderUrl']})")
+                            st.markdown("Terima Kasih!")
                     else:
                         st.error("Gagal mengirim laporan: " + result.get("message", "Terjadi kesalahan"))
 
