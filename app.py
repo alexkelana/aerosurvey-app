@@ -793,8 +793,30 @@ with tab_form:
 
         # Peta hanya menampilkan titik dari EXIF (bukan untuk input manual)
         if coords_ok and current_lat is not None and current_lng is not None:
-            st.caption("📍 Peta titik dari metadata Foto Top Tower (hanya tampilan, tidak dapat digeser untuk mengubah laporan):")
-            m = folium.Map(location=[current_lat, current_lng], zoom_start=17, control_scale=True)
+            st.caption(
+                "📍 Peta titik dari metadata Foto Top Tower "
+                "(tampilan satelit; tidak mengubah koordinat laporan):"
+            )
+            m = folium.Map(
+                location=[current_lat, current_lng],
+                zoom_start=18,
+                tiles=None,
+                control_scale=True,
+            )
+            folium.TileLayer(
+                tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                attr="Esri",
+                name="Satelit",
+                overlay=False,
+                control=True,
+                max_zoom=19,
+            ).add_to(m)
+            folium.TileLayer(
+                tiles="OpenStreetMap",
+                name="Peta Jalan",
+                overlay=False,
+                control=True,
+            ).add_to(m)
             folium.Marker(
                 [current_lat, current_lng],
                 popup=f"Top Tower EXIF: {st.session_state.site}",
@@ -809,12 +831,21 @@ with tab_form:
                 fill_color="#fca5a5",
                 fill_opacity=0.5,
             ).add_to(m)
+            folium.LayerControl(collapsed=False).add_to(m)
+
             map_key = f"top_exif_map_{st.session_state.get('map_token', 'init')}"
+            map_height = 420  # proporsional untuk view satelit
             try:
                 # returned_objects=[] mengurangi interaksi klik mengubah state
-                st_folium(m, height=280, use_container_width=True, key=map_key, returned_objects=[])
+                st_folium(
+                    m,
+                    height=map_height,
+                    use_container_width=True,
+                    key=map_key,
+                    returned_objects=[],
+                )
             except TypeError:
-                st_folium(m, height=280, use_container_width=True, key=map_key)
+                st_folium(m, height=map_height, use_container_width=True, key=map_key)
             st.markdown(
                 f"**Koordinat terkunci (EXIF):** `{st.session_state.coords}` "
                 f"· file: `{st.session_state.get('top_photo_name', '-')}`"
