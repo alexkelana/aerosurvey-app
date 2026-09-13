@@ -725,17 +725,11 @@ with tab_form:
 
         st.markdown("#### **Titik Koordinat Lokasi (Lat, Long)**")
 
-        # Widget terikat ke session_state.coord_text_input (di-set oleh GPS di awal script)
-        coord_input = st.text_input(
-            "Koordinat Desimal (Format: Latitude, Longitude) *",
-            key="coord_text_input",
-        )
-
+        # GPS DULU (sebelum text_input), agar boleh set session_state.coord_text_input
+        # Tanpa ini: StreamlitWidgetAlreadyInstantiatedError
         col_gps, col_gps_hint = st.columns([1, 2])
         with col_gps:
             st.markdown("**Deteksi lokasi perangkat**")
-            # Pendekatan ideal: streamlit-js-eval mengembalikan GPS ke Python
-            # (tanpa navigasi top-level dari iframe sandbox components.html)
             if not _HAS_STREAMLIT_GEO:
                 st.warning(
                     "Paket `streamlit-js-eval` belum terpasang. "
@@ -743,9 +737,8 @@ with tab_form:
                     "Sementara: ketik koordinat atau klik peta."
                 )
             else:
-                st.caption("Klik di bawah, lalu izinkan lokasi di browser.")
+                st.caption("Klik kontrol lokasi di bawah, lalu izinkan di browser.")
                 loc = _get_geolocation()
-                # Bentuk respons bervariasi antar versi library
                 lat_v, lng_v = None, None
                 if isinstance(loc, dict):
                     if "coords" in loc and isinstance(loc["coords"], dict):
@@ -763,17 +756,14 @@ with tab_form:
                         dlng = round(float(lng_v), 6)
                         if -90 <= dlat <= 90 and -180 <= dlng <= 180:
                             new_c = f"{dlat}, {dlng}"
-                            if (
-                                st.session_state.get("coord_text_input") != new_c
-                                or st.session_state.get("coords") != new_c
-                            ):
-                                st.session_state.coord_text_input = new_c
+                            # Set state SEBELUM st.text_input di bawah
+                            if st.session_state.get("coords") != new_c:
                                 st.session_state.coords = new_c
                                 st.session_state.lat = dlat
                                 st.session_state.lng = dlng
                                 st.session_state.gps_detected = True
                                 st.session_state.map_token = f"{dlat}_{dlng}"
-                                st.rerun()
+                                st.session_state.coord_text_input = new_c
                     except (TypeError, ValueError):
                         st.caption("Data GPS tidak valid, coba lagi.")
                 elif loc is not None:
@@ -786,6 +776,16 @@ with tab_form:
             )
             if st.session_state.get("gps_detected"):
                 st.success(f"GPS diterapkan: **{st.session_state.coords}**")
+
+        # Textbox SETELAH GPS — value dari session_state (boleh di-set hanya SEBELUM widget)
+        if st.session_state.get("_pending_coord_text"):
+            st.session_state.coord_text_input = st.session_state.pop("_pending_coord_text")
+        if "coord_text_input" not in st.session_state:
+            st.session_state.coord_text_input = st.session_state.coords
+        coord_input = st.text_input(
+            "Koordinat Desimal (Format: Latitude, Longitude) *",
+            key="coord_text_input",
+        )
 
         # Sinkronkan textbox → lat/lng/map
         try:
@@ -829,9 +829,10 @@ with tab_form:
                     st.session_state.coords = new_coords
                     st.session_state.lat = clicked_lat
                     st.session_state.lng = clicked_lng
-                    st.session_state.coord_text_input = new_coords
                     st.session_state.map_token = f"{clicked_lat}_{clicked_lng}"
                     st.session_state.gps_detected = False
+                    # Jangan set key widget setelah instantiated → pakai pending + rerun
+                    st.session_state._pending_coord_text = new_coords
                     st.rerun()
         except Exception:
             st.caption(f"Peta statis aktif: {current_lat}, {current_lng}")
