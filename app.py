@@ -10,7 +10,13 @@ import re
 from io import BytesIO
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
-import streamlit.components.v1 as components
+
+try:
+    from streamlit_js_eval import get_geolocation as _get_geolocation
+    _HAS_STREAMLIT_GEO = True
+except ImportError:
+    _get_geolocation = None
+    _HAS_STREAMLIT_GEO = False
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -728,182 +734,55 @@ with tab_form:
         col_gps, col_gps_hint = st.columns([1, 2])
         with col_gps:
             st.markdown("**Deteksi lokasi perangkat**")
-            components.html(
-                """
-                <div style="font-family: sans-serif;">
-                  <button id="btn-gps" style="
-                    width: 100%;
-                    padding: 0.55rem 0.75rem;
-                    border-radius: 0.5rem;
-                    border: 1px solid #0284c7;
-                    background: #0284c7;
-                    color: white;
-                    font-weight: 600;
-                    cursor: pointer;
-                    font-size: 0.9rem;
-                  ">🎯 Deteksi Lokasi (GPS)</button>
-                  <div id="gps-status" style="font-size: 0.75rem; color: #64748b; margin-top: 6px;"></div>
-                </div>
-                <script>
-                const STORAGE_KEY = "aerosurvey_pending_gps";
-                const btn = document.getElementById("btn-gps");
-                const status = document.getElementById("gps-status");
+            # Pendekatan ideal: streamlit-js-eval mengembalikan GPS ke Python
+            # (tanpa navigasi top-level dari iframe sandbox components.html)
+            if not _HAS_STREAMLIT_GEO:
+                st.warning(
+                    "Paket `streamlit-js-eval` belum terpasang. "
+                    "Tambahkan ke requirements.txt lalu reboot app. "
+                    "Sementara: ketik koordinat atau klik peta."
+                )
+            else:
+                st.caption("Klik di bawah, lalu izinkan lokasi di browser.")
+                loc = _get_geolocation()
+                # Bentuk respons bervariasi antar versi library
+                lat_v, lng_v = None, None
+                if isinstance(loc, dict):
+                    if "coords" in loc and isinstance(loc["coords"], dict):
+                        lat_v = loc["coords"].get("latitude")
+                        lng_v = loc["coords"].get("longitude")
+                    else:
+                        lat_v = loc.get("latitude")
+                        lng_v = loc.get("longitude")
+                        if lat_v is None and "lat" in loc:
+                            lat_v = loc.get("lat")
+                            lng_v = loc.get("lng") or loc.get("lon")
+                if lat_v is not None and lng_v is not None:
+                    try:
+                        dlat = round(float(lat_v), 6)
+                        dlng = round(float(lng_v), 6)
+                        if -90 <= dlat <= 90 and -180 <= dlng <= 180:
+                            new_c = f"{dlat}, {dlng}"
+                            if (
+                                st.session_state.get("coord_text_input") != new_c
+                                or st.session_state.get("coords") != new_c
+                            ):
+                                st.session_state.coord_text_input = new_c
+                                st.session_state.coords = new_c
+                                st.session_state.lat = dlat
+                                st.session_state.lng = dlng
+                                st.session_state.gps_detected = True
+                                st.session_state.map_token = f"{dlat}_{dlng}"
+                                st.rerun()
+                    except (TypeError, ValueError):
+                        st.caption("Data GPS tidak valid, coba lagi.")
+                elif loc is not None:
+                    st.caption("Menunggu izin / data lokasi dari browser…")
 
-                function getAppDoc() {
-                  try { return window.top.document; } catch (e) {}
-                  try { return window.parent.document; } catch (e2) {}
-                  return document;
-                }
-
-                function getAppWin() {
-                  try { return window.top; } catch (e) {}
-                  try { return window.parent; } catch (e2) {}
-                  return window;
-                }
-
-                /** Isi textbox Streamlit (React) agar nilai langsung tampil tanpa copy-paste */
-                function fillCoordTextbox(lat, lng) {
-                  const val = lat + ", " + lng;
-                  const doc = getAppDoc();
-                  let input = null;
-
-                  // 1) Cari lewat label
-                  doc.querySelectorAll("label").forEach(function (lab) {
-                    const t = (lab.textContent || "");
-                    if (t.indexOf("Koordinat Desimal") >= 0 || t.indexOf("Latitude, Longitude") >= 0) {
-                      const root = lab.closest('[data-testid="stTextInput"]') || lab.parentElement;
-                      if (root) {
-                        const el = root.querySelector("input");
-                        if (el) input = el;
-                      }
-                    }
-                  });
-
-                  // 2) Fallback: aria-label
-                  if (!input) {
-                    input = doc.querySelector('input[aria-label*="Koordinat"]')
-                         || doc.querySelector('input[aria-label*="Latitude"]');
-                  }
-
-                  if (!input) return false;
-
-                  const proto = window.HTMLInputElement
-                    ? window.HTMLInputElement.prototype
-                    : (getAppWin().HTMLInputElement && getAppWin().HTMLInputElement.prototype);
-                  const descriptor = proto && Object.getOwnPropertyDescriptor(proto, "value");
-                  const lastValue = input.value;
-                  if (descriptor && descriptor.set) {
-                    descriptor.set.call(input, val);
-                  } else {
-                    input.value = val;
-                  }
-                  // React 16+ value tracker
-                  try {
-                    if (input._valueTracker) input._valueTracker.setValue(lastValue);
-                  } catch (e) {}
-
-                  input.dispatchEvent(new Event("input", { bubbles: true }));
-                  input.dispatchEvent(new Event("change", { bubbles: true }));
-                  input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter" }));
-                  try {
-                    input.focus();
-                    input.blur();
-                  } catch (e) {}
-                  return true;
-                }
-
-                function tryNavigateWithParams(lat, lng) {
-                  const win = getAppWin();
-                  try {
-                    const url = new URL(win.location.href);
-                    url.searchParams.set("gps_lat", lat);
-                    url.searchParams.set("gps_lng", lng);
-                    win.location.replace(url.toString());
-                    return true;
-                  } catch (e) {
-                    try {
-                      const url2 = new URL(window.parent.location.href);
-                      url2.searchParams.set("gps_lat", lat);
-                      url2.searchParams.set("gps_lng", lng);
-                      window.parent.location.replace(url2.toString());
-                      return true;
-                    } catch (e2) {
-                      return false;
-                    }
-                  }
-                }
-
-                // Jika reload sebelumnya gagal: ada pending di localStorage → coba navigasi lagi
-                (function applyPending() {
-                  try {
-                    const raw = localStorage.getItem(STORAGE_KEY);
-                    if (!raw) return;
-                    const data = JSON.parse(raw);
-                    if (!data || data.lat == null || data.lng == null) return;
-                    const url = new URL(getAppWin().location.href);
-                    if (url.searchParams.get("gps_lat")) {
-                      localStorage.removeItem(STORAGE_KEY);
-                      return;
-                    }
-                    fillCoordTextbox(String(data.lat), String(data.lng));
-                    localStorage.removeItem(STORAGE_KEY);
-                    tryNavigateWithParams(String(data.lat), String(data.lng));
-                  } catch (e) {}
-                })();
-
-                btn.addEventListener("click", function () {
-                  status.textContent = "Meminta izin lokasi...";
-                  if (!navigator.geolocation) {
-                    status.textContent = "Browser tidak mendukung Geolocation.";
-                    return;
-                  }
-                  navigator.geolocation.getCurrentPosition(
-                    function (pos) {
-                      const lat = pos.coords.latitude.toFixed(6);
-                      const lng = pos.coords.longitude.toFixed(6);
-                      status.textContent = "Ditemukan: " + lat + ", " + lng + " — mengisi form...";
-
-                      try {
-                        localStorage.setItem(STORAGE_KEY, JSON.stringify({
-                          lat: lat, lng: lng, ts: Date.now()
-                        }));
-                      } catch (e) {}
-
-                      // 1) Langsung isi textbox (tanpa copy-paste)
-                      const filled = fillCoordTextbox(lat, lng);
-
-                      // 2) Coba reload dengan query param agar session_state + peta ikut
-                      const navigated = tryNavigateWithParams(lat, lng);
-
-                      if (navigated) {
-                        status.textContent = "Koordinat diterapkan, memuat ulang peta...";
-                      } else if (filled) {
-                        status.textContent = "Koordinat sudah diisi ke kotak. "
-                          + "Klik sekali di luar kotak atau tekan Enter agar peta ikut diperbarui.";
-                      } else {
-                        status.textContent = "Lokasi: " + lat + ", " + lng
-                          + " — textbox tidak ditemukan; ketik manual jika perlu.";
-                      }
-                    },
-                    function (err) {
-                      let msg = "Gagal deteksi lokasi.";
-                      if (err.code === 1) msg = "Izin lokasi ditolak. Izinkan lokasi di browser.";
-                      else if (err.code === 2) msg = "Lokasi tidak tersedia.";
-                      else if (err.code === 3) msg = "Timeout. Coba lagi di area terbuka.";
-                      status.textContent = msg;
-                    },
-                    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-                  );
-                });
-                </script>
-                """,
-                height=90,
-            )
         with col_gps_hint:
             st.caption(
-                "Izinkan lokasi di browser. Koordinat diisi otomatis ke kotak di atas. "
-                "Jika peta belum pindah, tekan Enter di kotak koordinat atau klik peta. "
-                "Alternatif: ketik manual / klik peta."
+                "GPS mengisi koordinat & memindahkan peta otomatis (tanpa reload halaman). "
+                "Jika ditolak browser, ketik manual atau klik peta. HTTPS wajib (Streamlit Cloud OK)."
             )
             if st.session_state.get("gps_detected"):
                 st.success(f"GPS diterapkan: **{st.session_state.coords}**")
