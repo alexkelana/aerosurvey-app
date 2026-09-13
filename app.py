@@ -11,12 +11,6 @@ from io import BytesIO
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 
-try:
-    from streamlit_js_eval import get_geolocation as _get_geolocation
-    _HAS_STREAMLIT_GEO = True
-except ImportError:
-    _get_geolocation = None
-    _HAS_STREAMLIT_GEO = False
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -208,6 +202,12 @@ if "reports" not in st.session_state:
 
 if "gps_detected" not in st.session_state:
     st.session_state.gps_detected = False
+
+if "coords_from_top_exif" not in st.session_state:
+    st.session_state.coords_from_top_exif = False
+
+if "top_photo_name" not in st.session_state:
+    st.session_state.top_photo_name = ""
 
 if "map_token" not in st.session_state:
     st.session_state.map_token = "init"
@@ -723,119 +723,104 @@ with tab_form:
 
         st.text_input("Nama Site (Sama dengan Tahap 1)", value=st.session_state.site, disabled=True, key="site_readonly")
 
-        st.markdown("#### **Titik Koordinat Lokasi (Lat, Long)**")
-
-        # GPS DULU (sebelum text_input), agar boleh set session_state.coord_text_input
-        # Tanpa ini: StreamlitWidgetAlreadyInstantiatedError
-        col_gps, col_gps_hint = st.columns([1, 2])
-        with col_gps:
-            st.markdown("**Deteksi lokasi perangkat**")
-            if not _HAS_STREAMLIT_GEO:
-                st.warning(
-                    "Paket `streamlit-js-eval` belum terpasang. "
-                    "Tambahkan ke requirements.txt lalu reboot app. "
-                    "Sementara: ketik koordinat atau klik peta."
-                )
-            else:
-                st.caption("Klik kontrol lokasi di bawah, lalu izinkan di browser.")
-                loc = _get_geolocation()
-                lat_v, lng_v = None, None
-                if isinstance(loc, dict):
-                    if "coords" in loc and isinstance(loc["coords"], dict):
-                        lat_v = loc["coords"].get("latitude")
-                        lng_v = loc["coords"].get("longitude")
-                    else:
-                        lat_v = loc.get("latitude")
-                        lng_v = loc.get("longitude")
-                        if lat_v is None and "lat" in loc:
-                            lat_v = loc.get("lat")
-                            lng_v = loc.get("lng") or loc.get("lon")
-                if lat_v is not None and lng_v is not None:
-                    try:
-                        dlat = round(float(lat_v), 6)
-                        dlng = round(float(lng_v), 6)
-                        if -90 <= dlat <= 90 and -180 <= dlng <= 180:
-                            new_c = f"{dlat}, {dlng}"
-                            # Set state SEBELUM st.text_input di bawah
-                            if st.session_state.get("coords") != new_c:
-                                st.session_state.coords = new_c
-                                st.session_state.lat = dlat
-                                st.session_state.lng = dlng
-                                st.session_state.gps_detected = True
-                                st.session_state.map_token = f"{dlat}_{dlng}"
-                                st.session_state.coord_text_input = new_c
-                    except (TypeError, ValueError):
-                        st.caption("Data GPS tidak valid, coba lagi.")
-                elif loc is not None:
-                    st.caption("Menunggu izin / data lokasi dari browser…")
-
-        with col_gps_hint:
-            st.caption(
-                "GPS mengisi koordinat & memindahkan peta otomatis (tanpa reload halaman). "
-                "Jika ditolak browser, ketik manual atau klik peta. HTTPS wajib (Streamlit Cloud OK)."
-            )
-            if st.session_state.get("gps_detected"):
-                st.success(f"GPS diterapkan: **{st.session_state.coords}**")
-
-        # Textbox SETELAH GPS — value dari session_state (boleh di-set hanya SEBELUM widget)
-        if st.session_state.get("_pending_coord_text"):
-            st.session_state.coord_text_input = st.session_state.pop("_pending_coord_text")
-        if "coord_text_input" not in st.session_state:
-            st.session_state.coord_text_input = st.session_state.coords
-        coord_input = st.text_input(
-            "Koordinat Desimal (Format: Latitude, Longitude) *",
-            key="coord_text_input",
+        st.markdown("#### **Titik Koordinat dari Foto Top Tower (EXIF)**")
+        st.info(
+            "Koordinat **wajib** diambil dari metadata GPS foto **Top Tower**. "
+            "Unggah foto yang diambil tepat di atas puncak tower (gimbal tilt-down). "
+            "Tidak ada isian manual — mencegah manipulasi lokasi."
         )
 
-        # Sinkronkan textbox → lat/lng/map
-        try:
-            parts = [float(x.strip()) for x in str(coord_input).split(",")]
-            if len(parts) == 2 and -90 <= parts[0] <= 90 and -180 <= parts[1] <= 180:
-                current_lat, current_lng = parts[0], parts[1]
-                st.session_state.coords = f"{current_lat}, {current_lng}"
-                st.session_state.lat = current_lat
-                st.session_state.lng = current_lng
+        top_file = st.file_uploader(
+            "Unggah Foto Top Tower (JPG/JPEG) *",
+            type=["jpg", "jpeg"],
+            accept_multiple_files=False,
+            key="uploader_top_tower",
+            help="File harus berisi EXIF GPS. Ambil di atas top tower sesuai SOP.",
+        )
+
+        coords_ok = False
+        current_lat = st.session_state.get("lat")
+        current_lng = st.session_state.get("lng")
+
+        if top_file is not None:
+            file_bytes = top_file.getvalue()
+            meta = extract_image_exif(file_bytes, top_file.name)
+            lat_v = meta.get("latitude")
+            lng_v = meta.get("longitude")
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Status EXIF", meta.get("status", "—"))
+            c2.metric("Altitude (m)", meta.get("altitude_m") if meta.get("altitude_m") is not None else "—")
+            c3.metric("Kamera", (meta.get("camera") or "—")[:28])
+
+            if lat_v is not None and lng_v is not None:
+                try:
+                    dlat = round(float(lat_v), 6)
+                    dlng = round(float(lng_v), 6)
+                    if -90 <= dlat <= 90 and -180 <= dlng <= 180:
+                        new_c = f"{dlat}, {dlng}"
+                        st.session_state.coords = new_c
+                        st.session_state.lat = dlat
+                        st.session_state.lng = dlng
+                        st.session_state.map_token = f"{dlat}_{dlng}"
+                        st.session_state.coords_from_top_exif = True
+                        st.session_state.top_photo_name = top_file.name
+                        st.session_state.top_photo_datetime = meta.get("datetime")
+                        current_lat, current_lng = dlat, dlng
+                        coords_ok = True
+                        st.success(
+                            f"Koordinat dari **{top_file.name}**: `{new_c}`"
+                            + (f" · waktu {meta.get('datetime')}" if meta.get("datetime") else "")
+                        )
+                    else:
+                        st.session_state.coords_from_top_exif = False
+                        st.error("Nilai GPS di metadata di luar rentang valid.")
+                except (TypeError, ValueError):
+                    st.session_state.coords_from_top_exif = False
+                    st.error("Gagal membaca angka koordinat dari EXIF.")
             else:
-                current_lat, current_lng = st.session_state.lat, st.session_state.lng
-        except Exception:
-            current_lat, current_lng = st.session_state.lat, st.session_state.lng
+                st.session_state.coords_from_top_exif = False
+                st.error(
+                    "Foto ini **tidak memiliki GPS EXIF**. "
+                    "Pastikan geotag drone aktif dan file tidak diedit hingga metadata hilang. "
+                    "Ganti dengan foto Top Tower yang valid."
+                )
+                if meta.get("notes"):
+                    st.caption(meta["notes"])
+        else:
+            st.session_state.coords_from_top_exif = False
+            st.caption("Belum ada foto Top Tower. Koordinat dan peta belum dapat ditentukan.")
 
-        st.caption("📍 Peta Interaktif (Klik pada peta untuk memilih titik lokasi survey):")
-        m = folium.Map(location=[current_lat, current_lng], zoom_start=16, control_scale=True)
-        folium.Marker(
-            [current_lat, current_lng],
-            popup=f"Titik Survey: {st.session_state.site}",
-            tooltip="Titik Lokasi Terpilih",
-            icon=folium.Icon(color="blue", icon="plane", prefix="fa")
-        ).add_to(m)
-        folium.CircleMarker(
-            [current_lat, current_lng],
-            radius=8,
-            color="#0284c7",
-            fill=True,
-            fill_color="#38bdf8",
-            fill_opacity=0.5,
-        ).add_to(m)
-
-        # key berubah saat GPS/klik → peta di-remount di titik baru
-        map_key = f"survey_leaflet_map_{st.session_state.get('map_token', 'init')}"
-        try:
-            map_data = st_folium(m, height=280, use_container_width=True, key=map_key)
-            if map_data and isinstance(map_data, dict) and map_data.get("last_clicked"):
-                clicked_lat = round(map_data["last_clicked"]["lat"], 6)
-                clicked_lng = round(map_data["last_clicked"]["lng"], 6)
-                new_coords = f"{clicked_lat}, {clicked_lng}"
-                if new_coords != st.session_state.coords:
-                    st.session_state.coords = new_coords
-                    st.session_state.lat = clicked_lat
-                    st.session_state.lng = clicked_lng
-                    st.session_state.map_token = f"{clicked_lat}_{clicked_lng}"
-                    st.session_state.gps_detected = False
-                    # Jangan set key widget setelah instantiated → pakai pending + rerun
-                    st.session_state._pending_coord_text = new_coords
-                    st.rerun()
-        except Exception:
-            st.caption(f"Peta statis aktif: {current_lat}, {current_lng}")
+        # Peta hanya menampilkan titik dari EXIF (bukan untuk input manual)
+        if coords_ok and current_lat is not None and current_lng is not None:
+            st.caption("📍 Peta titik dari metadata Foto Top Tower (hanya tampilan, tidak dapat digeser untuk mengubah laporan):")
+            m = folium.Map(location=[current_lat, current_lng], zoom_start=17, control_scale=True)
+            folium.Marker(
+                [current_lat, current_lng],
+                popup=f"Top Tower EXIF: {st.session_state.site}",
+                tooltip="Koordinat dari Foto Top Tower",
+                icon=folium.Icon(color="red", icon="camera", prefix="fa"),
+            ).add_to(m)
+            folium.CircleMarker(
+                [current_lat, current_lng],
+                radius=10,
+                color="#b91c1c",
+                fill=True,
+                fill_color="#fca5a5",
+                fill_opacity=0.5,
+            ).add_to(m)
+            map_key = f"top_exif_map_{st.session_state.get('map_token', 'init')}"
+            try:
+                # returned_objects=[] mengurangi interaksi klik mengubah state
+                st_folium(m, height=280, use_container_width=True, key=map_key, returned_objects=[])
+            except TypeError:
+                st_folium(m, height=280, use_container_width=True, key=map_key)
+            st.markdown(
+                f"**Koordinat terkunci (EXIF):** `{st.session_state.coords}` "
+                f"· file: `{st.session_state.get('top_photo_name', '-')}`"
+            )
+        else:
+            st.warning("Peta akan muncul setelah foto Top Tower dengan GPS EXIF valid diunggah.")
 
         submit_btn = st.button("🚀 Kirim Laporan", type="primary", use_container_width=True, key="btn_submit_report")
 
@@ -843,6 +828,10 @@ with tab_form:
             final_pilot = (st.session_state.pilot_name or "").strip()
             if not final_pilot:
                 st.error("Nama Pilot wajib diisi.")
+            elif not st.session_state.get("coords_from_top_exif"):
+                st.error(
+                    "Koordinat belum valid. Unggah **Foto Top Tower** yang memiliki metadata GPS EXIF."
+                )
             else:
                 final_drone = (
                     st.session_state.custom_drone.strip()
@@ -891,13 +880,20 @@ with tab_form:
                         """, unsafe_allow_html=True)
 
                         if result.get("folderUrl"):
-                            st.markdown("Terima Kasih!")
+                            st.markdown(f"[📂 Buka Folder Backup]({result['folderUrl']})")
                     else:
                         st.error("Gagal mengirim laporan: " + result.get("message", "Terjadi kesalahan"))
 
         if st.button("🔄 Buat Laporan Baru (Reset)", use_container_width=True, key="btn_reset_report"):
             st.session_state.is_phase1_completed = False
             st.session_state.is_phase2_enabled = False
+            st.session_state.coords_from_top_exif = False
+            st.session_state.top_photo_name = ""
+            st.session_state.top_photo_datetime = None
+            st.session_state.coords = "-6.208800, 106.845600"
+            st.session_state.lat = -6.208800
+            st.session_state.lng = 106.845600
+            st.session_state.map_token = "init"
             st.session_state.site = ""
             st.session_state.created_folder_url = ""
             st.session_state.pilot_name = ""
@@ -1142,4 +1138,4 @@ with tab_help:
     4. Admin menerima email + data masuk Google Sheet / folder backup  
     """)
 
-    st.caption("AeroSurvey Pro v3.1.1 · Aerial Jaya")
+    st.caption("AeroSurvey Pro v3.2.1 · Aerial Jaya")
