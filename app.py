@@ -453,6 +453,31 @@ def backend_config_payload():
     return out
 
 
+def check_mail_quota():
+    """Panggil backend action=mailQuota untuk sisa kuota MailApp harian."""
+    api_url = st.session_state.config.get("APPS_SCRIPT_URL", "").strip()
+    if not api_url:
+        return {
+            "success": False,
+            "message": "URL Apps Script belum diisi. Simpan di Pengaturan terlebih dahulu.",
+        }
+    try:
+        # Coba POST dulu
+        res = requests.post(api_url, json={"action": "mailQuota"}, timeout=20)
+        data = res.json()
+        if isinstance(data, dict) and (data.get("mailQuota") or data.get("success")):
+            return data
+    except Exception:
+        pass
+    try:
+        # Fallback GET ?action=mailQuota
+        sep = "&" if "?" in api_url else "?"
+        res = requests.get(f"{api_url}{sep}action=mailQuota", timeout=20)
+        return res.json()
+    except Exception as e:
+        return {"success": False, "message": f"Gagal menghubungi backend: {e}"}
+
+
 def create_drive_folder(site_name, month_str, email_pilot):
     """Payload keys MUST match Code.gs: site, monthLabelStr, pilotEmail"""
     api_url = st.session_state.config.get("APPS_SCRIPT_URL", "").strip()
@@ -996,6 +1021,37 @@ with tab_settings:
             "dan pastikan `Code.gs` sudah di-deploy dengan whitelist CONFIG terbaru."
         )
 
+        st.divider()
+        st.subheader("Kuota Email (MailApp)")
+        st.caption(
+            "Menampilkan sisa kuota pengiriman email harian akun Google yang menjalankan Apps Script. "
+            "Setiap notifikasi laporan (termasuk multi-penerima dalam satu `sendEmail`) mengurangi kuota."
+        )
+        if st.button("📧 Cek Kuota MailApp", use_container_width=True, key="btn_check_mail_quota"):
+            with st.spinner("Menghubungi backend Apps Script..."):
+                qres = check_mail_quota()
+            if not qres or qres.get("success") is False and not qres.get("mailQuota"):
+                st.error(qres.get("message", "Gagal membaca kuota.") if isinstance(qres, dict) else "Gagal membaca kuota.")
+            else:
+                mq = qres.get("mailQuota") or {}
+                remaining = mq.get("remaining")
+                if remaining is None:
+                    st.warning(mq.get("error") or mq.get("note") or "Kuota tidak tersedia.")
+                else:
+                    m1, m2 = st.columns(2)
+                    m1.metric("Sisa kuota hari ini", f"{remaining}")
+                    m2.metric("Unit", mq.get("unit", "emails"))
+                    if remaining <= 0:
+                        st.error("Kuota email habis. Notifikasi admin tidak akan terkirim sampai reset harian.")
+                    elif remaining < 20:
+                        st.warning("Kuota hampir habis. Batasi uji kirim atau tunggu reset harian.")
+                    else:
+                        st.success("Kuota masih tersedia untuk notifikasi laporan.")
+                    if mq.get("note"):
+                        st.caption(mq["note"])
+                    if qres.get("timestamp"):
+                        st.caption(f"Dicek pada: {qres['timestamp']}")
+                        
         st.divider()
         st.subheader("Rekapitulasi Survey (Sesi Ini)")
 
